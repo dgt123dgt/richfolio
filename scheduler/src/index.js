@@ -72,7 +72,7 @@ export const TRIGGERS = {
   // Collapsed from four separate GitHub crons (3:15/7:00/10:45/14:30) into one
   // expression to stay inside the 5-trigger free-plan budget. Minute :15 keeps
   // them off the crypto schedule's :00 slots, as the original spacing did.
-  "15 3,7,11,14 * * MON-FRI": "intraday",
+  "15 0,3,6,14 * * MON-FRI": "intraday",
 };
 
 const GITHUB_API = "https://api.github.com";
