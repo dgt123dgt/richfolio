@@ -73,10 +73,6 @@ export const TRIGGERS = {
   // expression to stay inside the 5-trigger free-plan budget. Minute :15 keeps
   // them off the crypto schedule's :00 slots, as the original spacing did.
   "15 3,7,11,14 * * MON-FRI": "intraday",
-
-  // Every 3 hours. Crypto trades 24/7, so unlike the equity intraday runs these
-  // always have real price movement to compare against.
-  "0 */3 * * *": "crypto",
 };
 
 const GITHUB_API = "https://api.github.com";

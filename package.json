@@ -4,12 +4,12 @@
   "description": "A zero-maintenance morning email digest for your investment portfolio. Set your target allocations once, get a daily briefing with allocation gaps, buy signals, and relevant news — automatically via GitHub Actions.",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx src/index.ts",
-    "weekly": "tsx src/index.ts --weekly",
-    "intraday": "tsx src/index.ts --intraday",
-    "refresh": "tsx src/index.ts --refresh",
-    "crypto": "tsx src/index.ts --crypto",
+    "start": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts",
+    "dev": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts",
+    "weekly": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --weekly",
+    "intraday": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --intraday",
+    "refresh": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --refresh",
+    "crypto": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --crypto",
     "typecheck": "tsc --noEmit",
     "test": "node --import=tsx/esm --test test/*.test.ts",
     "smoke": "npx tsx smoke/smoke-fx.ts && npx tsx smoke/smoke-conversion.ts && npx tsx smoke/smoke-money-format.ts && npm run smoke:crypto",
@@ -26,7 +26,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/furic/richfolio.git"
+    "url": "git+https://github.com/dgt123dgt/richfolio.git"
   },
   "keywords": [
     "portfolio",
@@ -58,6 +58,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
+    "cross-env": "^10.1.0",
     "prettier": "^3.3.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

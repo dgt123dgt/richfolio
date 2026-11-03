@@ -26,14 +26,13 @@
     "crons": [
       "0 22 * * *", // daily brief      — 8:00am AEST
       "30 22 * * SUN", // weekly report    — Monday 8:30am AEST
-      "15 3,7,11,14 * * MON-FRI", // intraday checks  — 1:15pm/5:15pm/9:15pm/12:15am AEST
-      "0 */3 * * *" // crypto pairs     — every 3 hours
+      "15 3,7,11,14 * * MON-FRI" // intraday checks  — 1:15pm/5:15pm/9:15pm/12:15am AEST
     ]
   },
 
   // Not a secret: it is in the git remote URL already.
   "vars": {
-    "GITHUB_REPO": "furic/richfolio"
+    "GITHUB_REPO": "dgt123dgt/richfolio"
   },
 
   // Secrets (set via `npx wrangler secret put <NAME>`, never in this file):
