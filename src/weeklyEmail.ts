@@ -27,14 +27,14 @@ function fmtPct(n: number): string {
 }
 
 function actionLabel(gap: number): { text: string; color: string } {
-  if (gap > 1) return { text: "BUY", color: S.red };
-  if (gap < -1) return { text: "TRIM", color: S.yellow };
-  return { text: "OK", color: S.green };
+  if (gap > 1) return { text: "买入", color: S.red };
+  if (gap < -1) return { text: "减持", color: S.yellow };
+  return { text: "达标", color: S.green };
 }
 
 // ── Build HTML ──────────────────────────────────────────────────────
 export function buildWeeklyEmailHtml(report: AllocationReport): string {
-  const date = new Date().toLocaleDateString("en-AU", {
+  const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -66,7 +66,7 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:22px;color:#fff;">Weekly Rebalancing Report</h1>
+  <h1 style="margin:0;font-size:22px;color:#fff;">每周再平衡报告</h1>
   <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date}</p>
 </td></tr>
 
@@ -74,19 +74,19 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-bottom:1px solid ${S.border};">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">Holdings Value · ${defaultCurrency}</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">持仓市值（${defaultCurrency}）</div>
       <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.totalCurrentValue)}</div>
     </td>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">Portfolio Beta</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">组合 Beta</div>
       <div style="font-size:20px;font-weight:bold;color:#fff;">${report.portfolioBeta?.toFixed(2) ?? "—"}</div>
     </td>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">On Target</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">达标数量</div>
       <div style="font-size:20px;font-weight:bold;color:${S.green};">${onTarget.length}/${report.items.filter((i) => i.targetPct > 0).length}</div>
     </td>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">Est. Annual Div</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">预估年股息</div>
       <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.estimatedAnnualDividend)}</div>
     </td>
   </tr></table>
@@ -94,18 +94,18 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
 
 <!-- Rebalancing Actions -->
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">Rebalancing Actions</h2>
-  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">Sorted by drift from target. Positions within ±1% are considered on-target.</p>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">再平衡操作</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">按偏离目标的幅度排序。偏离 ±1% 以内视为达标。</p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
     <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">Ticker</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:center;">Action</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Current</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Target</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Gap</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Amount</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">代码</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:center;">操作</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">当前</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">目标</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">缺口</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">金额</td>
     </tr>
     ${sorted
       .filter((i) => i.targetPct > 0 || i.currentValue > 0)
@@ -120,7 +120,7 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.currentPct.toFixed(1)}%</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.targetPct.toFixed(1)}%</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${action.color};">${fmtPct(item.gapPct)}</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.suggestedBuyValue > 0 ? `Buy ${fmt$(item.suggestedBuyValue)}${item.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(item.overlapDiscount)} overlap</div>` : ""}` : "—"}</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.suggestedBuyValue > 0 ? `买入 ${fmt$(item.suggestedBuyValue)}${item.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(item.overlapDiscount)} 重合扣减</div>` : ""}` : "—"}</td>
     </tr>`;
       })
       .join("")}
@@ -132,9 +132,9 @@ ${
     ? `
 <!-- Overweight Warning -->
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h3 style="margin:0;font-size:14px;color:${S.yellow};">⚠ Overweight Positions</h3>
+  <h3 style="margin:0;font-size:14px;color:${S.yellow};">⚠ 超配持仓</h3>
   <p style="margin:4px 0 0;font-size:12px;color:${S.text};">
-    ${overweight.map((i) => `<b>${i.ticker}</b> (${i.currentPct.toFixed(1)}% vs ${i.targetPct.toFixed(1)}% target)`).join(", ")}
+    ${overweight.map((i) => `<b>${i.ticker}</b>（当前 ${i.currentPct.toFixed(1)}% vs 目标 ${i.targetPct.toFixed(1)}%）`).join("，")}
   </p>
 </td></tr>`
     : ""
@@ -145,7 +145,7 @@ ${
     ? `
 <!-- No-target holdings -->
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h3 style="margin:0;font-size:14px;color:${S.muted};">Holdings Not in Target Portfolio</h3>
+  <h3 style="margin:0;font-size:14px;color:${S.muted};">未纳入目标组合的持仓</h3>
   <p style="margin:4px 0 0;font-size:12px;color:${S.text};">
     ${noTarget.map((i) => `<b>${i.ticker}</b> (${fmt$(i.currentValue)}, ${i.currentPct.toFixed(1)}%)`).join(", ")}
   </p>
@@ -156,7 +156,7 @@ ${
 ${
   hasCrossCurrency
     ? `<tr><td style="padding:10px 24px;background:${S.cardBg};border-top:1px solid ${S.border};font-size:11px;color:${S.muted};">
-  Values shown in ${defaultCurrency} — multi-currency portfolio detected.
+  金额以 ${defaultCurrency} 显示 — 检测到多币种组合。
 </td></tr>`
     : ""
 }
@@ -164,7 +164,7 @@ ${
 <!-- Footer -->
 <tr><td style="padding:16px 24px;background:${S.accent};border-radius:0 0 8px 8px;text-align:center;">
   <p style="margin:0;font-size:11px;color:${S.muted};">
-    Edit CONFIG_JSON variable to update your portfolio · Powered by Richfolio
+    修改 CONFIG_JSON 变量可更新你的投资组合 · Powered by Richfolio
   </p>
 </td></tr>
 
@@ -180,7 +180,7 @@ export async function sendWeeklyBrief(report: AllocationReport): Promise<void> {
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",
     to: recipientEmail,
-    subject: `Richfolio Weekly Rebalance — ${new Date().toLocaleDateString("en-AU")}`,
+    subject: `Richfolio 每周再平衡 — ${new Date().toLocaleDateString("zh-CN")}`,
     html,
   });
 

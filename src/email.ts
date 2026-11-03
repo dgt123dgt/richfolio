@@ -27,6 +27,28 @@ const S = {
 // ── Helpers ─────────────────────────────────────────────────────────
 const fmt$ = (n: number) => formatMoney(n, defaultCurrency);
 
+// Chinese display labels for the action enum. Internal comparisons everywhere
+// still use the English enum values; this map only affects rendering.
+const ACTION_LABELS: Record<string, string> = {
+  "STRONG BUY": "强烈买入",
+  BUY: "买入",
+  HOLD: "持有",
+  WAIT: "观望",
+  TRIM: "减持",
+};
+
+const MOMENTUM_LABELS: Record<string, string> = {
+  bullish: "看多",
+  bearish: "看空",
+  neutral: "中性",
+};
+
+const AGREEMENT_LABELS: Record<string, string> = {
+  unanimous: "全体一致",
+  majority: "多数一致",
+  split: "意见分歧",
+};
+
 // Money belonging to a specific recommendation. Most instruments are converted
 // to the report currency, but a crypto cross-pair is quoted in its own coin and
 // never goes through FX — so its price and limit order must render in that coin,
@@ -66,7 +88,8 @@ function actionBadge(action: string): string {
     WAIT: { bg: "#e74c3c", text: "#fff" },
   };
   const c = colors[action] || colors.HOLD;
-  return `<span style="background:${c.bg};color:${c.text};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;">${action}</span>`;
+  const label = ACTION_LABELS[action] ?? action;
+  return `<span style="background:${c.bg};color:${c.text};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;">${label}</span>`;
 }
 
 function confidenceBar(pct: number): string {
@@ -89,13 +112,13 @@ const ratingColors: Record<string, string> = {
 function valueRatingBadge(rating: string | undefined): string {
   if (!rating || rating === "") return "";
   const color = ratingColors[rating] || S.muted;
-  return `<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">Value ${rating}</span>`;
+  return `<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">价值 ${rating}</span>`;
 }
 
 function earningsBadge(daysToEarnings: number | null): string {
   if (daysToEarnings == null || daysToEarnings > 14) return "";
   const color = daysToEarnings <= 3 ? S.red : daysToEarnings <= 7 ? S.yellow : S.muted;
-  return `<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">earnings ${daysToEarnings}d</span>`;
+  return `<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">财报 ${daysToEarnings}天</span>`;
 }
 
 // ── Multi-AI helpers (rendered only when providers.length >= 2) ─────
@@ -107,7 +130,8 @@ function agreementBadge(agreement: AIBuyRecommendation["agreement"]): string {
     split: S.red,
   };
   const c = colors[agreement] ?? S.muted;
-  return `<span style="background:${c}22;color:${c};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">${agreement}</span>`;
+  const label = AGREEMENT_LABELS[agreement] ?? agreement;
+  return `<span style="background:${c}22;color:${c};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">${label}</span>`;
 }
 
 // A degraded run lost the cross-provider agreement STRONG BUY requires, so it
@@ -118,7 +142,7 @@ function degradedBadge(degradation: AIBuyRecommendation["degradation"]): string 
   if (!degradation) return "";
   const label = `${degradation.answered}/${degradation.configured} AI`;
   const title = escapeHtmlAttr(
-    `${degradation.missing.join(", ")} did not respond — cross-provider agreement could not be verified on this run`,
+    `${degradation.missing.join(", ")} 未响应 — 本次运行无法验证跨 AI 一致性`,
   );
   return `<span title="${title}" style="background:${S.yellow}22;color:${S.yellow};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">⚠ ${label}</span>`;
 }
@@ -180,36 +204,38 @@ function buildTechnicalInsight(rec: AIBuyRecommendation, tech: TechnicalData | u
     const rsiColor = tech.rsi14 < 30 ? S.green : tech.rsi14 > 70 ? S.red : S.muted;
 
     const lines = [
-      `<span style="color:${momentumColor};">${tech.momentumSignal}</span>`,
+      `<span style="color:${momentumColor};">${MOMENTUM_LABELS[tech.momentumSignal] ?? tech.momentumSignal}</span>`,
       `RSI <span style="color:${rsiColor};">${tech.rsi14}</span>`,
       `50MA ${fmtRec(rec, tech.sma50)} (${tech.priceVsSma50 > 0 ? "+" : ""}${tech.priceVsSma50}%)`,
     ];
     if (tech.sma200 != null) {
       lines.push(`200MA ${fmtRec(rec, tech.sma200)}`);
     }
-    if (tech.goldenCross) lines.push(`<span style="color:${S.green};">golden cross</span>`);
-    if (tech.deathCross) lines.push(`<span style="color:${S.red};">death cross</span>`);
+    if (tech.goldenCross) lines.push(`<span style="color:${S.green};">金叉</span>`);
+    if (tech.deathCross) lines.push(`<span style="color:${S.red};">死叉</span>`);
     if (tech.macdCrossover) {
       const macdColor = tech.macdCrossover === "bullish" ? S.green : S.red;
-      lines.push(`MACD <span style="color:${macdColor};">${tech.macdCrossover}</span>`);
+      lines.push(
+        `MACD <span style="color:${macdColor};">${MOMENTUM_LABELS[tech.macdCrossover] ?? tech.macdCrossover}</span>`,
+      );
     } else if (tech.macdHistogram != null) {
       const histColor = tech.macdHistogram > 0 ? S.green : S.red;
       lines.push(
-        `MACD hist <span style="color:${histColor};">${tech.macdHistogram > 0 ? "+" : ""}${tech.macdHistogram}</span>`,
+        `MACD 柱 <span style="color:${histColor};">${tech.macdHistogram > 0 ? "+" : ""}${tech.macdHistogram}</span>`,
       );
     }
     if (tech.bollPercentB != null) {
       const bColor = tech.bollPercentB < 0.2 ? S.green : tech.bollPercentB > 0.8 ? S.red : S.muted;
       lines.push(`%B <span style="color:${bColor};">${tech.bollPercentB}</span>`);
     }
-    if (tech.bollSqueeze) lines.push(`<span style="color:${S.yellow};">squeeze</span>`);
+    if (tech.bollSqueeze) lines.push(`<span style="color:${S.yellow};">布林收口</span>`);
 
-    html += `<span style="color:${S.blue};">Momentum:</span> ${lines.join(" · ")}`;
+    html += `<span style="color:${S.blue};">动量：</span> ${lines.join(" · ")}`;
   }
 
   // Limit order (any STRONG BUY vote)
   if (hasStrongBuyVote(rec) && rec.suggestedLimitPrice && rec.suggestedLimitPrice > 0) {
-    html += `<br><span style="color:${S.green};">Limit order:</span> ${fmtRec(rec, rec.suggestedLimitPrice)}`;
+    html += `<br><span style="color:${S.green};">限价建议：</span> ${fmtRec(rec, rec.suggestedLimitPrice)}`;
     if (rec.limitPriceReason) {
       html += ` — ${rec.limitPriceReason}`;
     }
@@ -217,7 +243,7 @@ function buildTechnicalInsight(rec: AIBuyRecommendation, tech: TechnicalData | u
 
   // Bottom signal (oversold detection)
   if (rec.bottomSignal && rec.bottomSignal !== "") {
-    html += `<br><span style="color:${S.yellow};">Bottom signal:</span> ${rec.bottomSignal}`;
+    html += `<br><span style="color:${S.yellow};">见底信号：</span> ${rec.bottomSignal}`;
   }
 
   html += `</div>`;
@@ -246,12 +272,12 @@ function buildAISection(
   const providerLabels = firstWithProviders?.providers?.map((p) => p.providerLabel) ?? ["Gemini"];
   const multiAIMode = providerLabels.length >= 2;
   const subtitle = multiAIMode
-    ? `Powered by ${providerLabels.join(" + ")} — scores averaged across providers. Per-AI breakdown below each ticker.`
-    : `Powered by ${providerLabels[0]} — considers fundamentals, valuation, allocation gap, technicals, and news sentiment.`;
+    ? `由 ${providerLabels.join(" + ")} 联合分析 — 分数取各 AI 均值，每只标的下方附各 AI 明细。`
+    : `由 ${providerLabels[0]} 分析 — 综合基本面、估值、配置缺口、技术面与新闻情绪。`;
 
   return `
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">AI Buy Recommendations</h2>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">AI 买入建议</h2>
   <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">${subtitle}</p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
@@ -274,20 +300,20 @@ function buildAISection(
       hasStrongBuyVote(rec) && rec.analysisUrl
         ? `
     <div style="margin-top:8px;">
-      <a href="${rec.analysisUrl}" style="display:inline-block;background:${S.blue}22;color:${S.blue};padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold;text-decoration:none;border:1px solid ${S.blue}44;">More Details &rarr;</a>
+      <a href="${rec.analysisUrl}" style="display:inline-block;background:${S.blue}22;color:${S.blue};padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold;text-decoration:none;border:1px solid ${S.blue}44;">查看详情 &rarr;</a>
     </div>`
         : ""
     }
   </div>`,
           )
           .join("")
-      : `<p style="color:${S.muted};font-size:13px;">No strong buy opportunities identified today.</p>`
+      : `<p style="color:${S.muted};font-size:13px;">今日暂无符合买入条件的标的。</p>`
   }
   ${
     others.length > 0
       ? `
   <div style="margin-top:12px;">
-    <div style="font-size:11px;color:${S.muted};text-transform:uppercase;margin-bottom:6px;">Hold / Wait</div>
+    <div style="font-size:11px;color:${S.muted};text-transform:uppercase;margin-bottom:6px;">持有 / 观望</div>
     ${others
       .map(
         (rec) => `
@@ -305,8 +331,8 @@ function buildAISection(
     watching.length > 0
       ? `
   <div style="margin-top:18px;padding-top:14px;border-top:2px dashed ${S.border};">
-    <div style="font-size:13px;color:${S.yellow};font-weight:bold;margin-bottom:2px;">Watch List</div>
-    <div style="font-size:11px;color:${S.muted};margin-bottom:10px;">Tickers tracked but not in your target portfolio — signals only, no buy size suggested.</div>
+    <div style="font-size:13px;color:${S.yellow};font-weight:bold;margin-bottom:2px;">观察名单</div>
+    <div style="font-size:11px;color:${S.muted};margin-bottom:10px;">跟踪中但不在目标组合内 — 仅提示信号，不建议买入金额。</div>
     ${watchActionable
       .map(
         (rec) => `
@@ -323,7 +349,7 @@ function buildAISection(
         hasStrongBuyVote(rec) && rec.analysisUrl
           ? `
       <div style="margin-top:8px;">
-        <a href="${rec.analysisUrl}" style="display:inline-block;background:${S.blue}22;color:${S.blue};padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold;text-decoration:none;border:1px solid ${S.blue}44;">More Details &rarr;</a>
+        <a href="${rec.analysisUrl}" style="display:inline-block;background:${S.blue}22;color:${S.blue};padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold;text-decoration:none;border:1px solid ${S.blue}44;">查看详情 &rarr;</a>
       </div>`
           : ""
       }
@@ -360,18 +386,18 @@ function buildFallbackBuysSection(report: AllocationReport): string {
 
   return `
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">Priority Buys</h2>
-  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">Sorted by allocation gap. Set GEMINI_API_KEY for AI-powered recommendations.</p>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">优先买入</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">按配置缺口排序。配置 GEMINI_API_KEY 可启用 AI 推荐。</p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;">
     <tr style="color:${S.muted};font-size:11px;text-transform:uppercase;">
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};">Ticker</td>
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">Gap</td>
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">Buy ~Shares</td>
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">Buy ~Value</td>
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:center;">P/E</td>
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:center;">52w</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};">代码</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">缺口</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">建议股数</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">建议金额</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:center;">市盈率</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:center;">52周</td>
     </tr>
     ${buys
       .map(
@@ -380,7 +406,7 @@ function buildFallbackBuysSection(report: AllocationReport): string {
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(b.tickerFullName ?? b.ticker)}">${b.ticker}</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;color:${S.red};">${fmtPct(b.gapPct)}</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">${b.suggestedBuyShares.toFixed(1)}</td>
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">${fmt$(b.suggestedBuyValue)}${b.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(b.overlapDiscount)} overlap</div>` : ""}</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">${fmt$(b.suggestedBuyValue)}${b.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(b.overlapDiscount)} 重合扣减</div>` : ""}</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:center;">${fmtPE(b)}</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:center;">${b.weekSignal ?? "—"}</td>
     </tr>`,
@@ -399,7 +425,7 @@ export function buildEmailHtml(
   priceData: Record<string, QuoteData> = {},
   fxSkipped: Array<{ ticker: string; reason: string }> = [],
 ): string {
-  const date = new Date().toLocaleDateString("en-AU", {
+  const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -431,7 +457,7 @@ export function buildEmailHtml(
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:22px;color:#fff;">Richfolio Daily Brief</h1>
+  <h1 style="margin:0;font-size:22px;color:#fff;">Richfolio 每日简报</h1>
   <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date}</p>
 </td></tr>
 
@@ -439,15 +465,15 @@ export function buildEmailHtml(
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-bottom:1px solid ${S.border};">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">Holdings Value · ${defaultCurrency}</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">持仓市值（${defaultCurrency}）</div>
       <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.totalCurrentValue)}</div>
     </td>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">Portfolio Beta</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">组合 Beta</div>
       <div style="font-size:20px;font-weight:bold;color:#fff;">${report.portfolioBeta?.toFixed(2) ?? "—"}</div>
     </td>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">Est. Annual Div</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">预估年股息</div>
       <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.estimatedAnnualDividend)}</div>
     </td>
   </tr></table>
@@ -458,20 +484,20 @@ ${buysSection}
 
 <!-- Full Allocation Table -->
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">Allocation Table</h2>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">配置明细</h2>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
     <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">Ticker</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Price</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Current</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Target</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Gap</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">P/E</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Div</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">代码</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">当前</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">目标</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">缺口</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">市盈率</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">股息率</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">Beta</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">52w Range</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">52周位置</td>
     </tr>
     ${report.items
       .map(
@@ -481,7 +507,7 @@ ${buysSection}
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${fmt$(item.price)}</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.currentPct.toFixed(1)}%</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.targetPct.toFixed(1)}%</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${gapColor(item.gapPct)};">${fmtPct(item.gapPct)}${item.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(item.overlapDiscount)} overlap</div>` : ""}</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${gapColor(item.gapPct)};">${fmtPct(item.gapPct)}${item.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(item.overlapDiscount)} 重合扣减</div>` : ""}</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${fmtPE(item)}</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.dividendYield != null ? (item.dividendYield * 100).toFixed(1) + "%" : "—"}</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.beta?.toFixed(2) ?? "—"}</td>
@@ -497,7 +523,7 @@ ${
   tickersWithNews.length > 0
     ? `
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">News Digest</h2>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">新闻摘要</h2>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   ${tickersWithNews
@@ -527,7 +553,7 @@ ${
     ? `
 <!-- FX caveat -->
 <tr><td style="padding:10px 24px;background:${S.cardBg};border-top:1px solid ${S.border};font-size:11px;color:${S.muted};">
-  Limit prices shown in ${defaultCurrency} — check your broker's quote currency before placing an order.
+  限价以 ${defaultCurrency} 计价 — 下单前请核对券商报价币种。
 </td></tr>`
     : ""
 }
@@ -536,7 +562,7 @@ ${
     ? `
 <!-- FX skipped tickers -->
 <tr><td style="padding:10px 24px;background:${S.cardBg};border-top:1px solid ${S.border};font-size:11px;color:${S.yellow};">
-  FX lookup failed — skipped: ${fxSkipped.map((s) => `${s.ticker} (${s.reason})`).join(", ")}
+  汇率查询失败，已跳过：${fxSkipped.map((s) => `${s.ticker} (${s.reason})`).join(", ")}
 </td></tr>`
     : ""
 }
@@ -544,7 +570,7 @@ ${
 <!-- Footer -->
 <tr><td style="padding:16px 24px;background:${S.accent};border-radius:0 0 8px 8px;text-align:center;">
   <p style="margin:0;font-size:11px;color:${S.muted};">
-    Edit CONFIG_JSON variable to update your portfolio · Powered by Richfolio
+    修改 CONFIG_JSON 变量可更新你的投资组合 · Powered by Richfolio
   </p>
 </td></tr>
 
@@ -567,7 +593,7 @@ export async function sendBrief(
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",
     to: recipientEmail,
-    subject: `Richfolio Brief — ${new Date().toLocaleDateString("en-AU")}`,
+    subject: `Richfolio 每日简报 — ${new Date().toLocaleDateString("zh-CN")}`,
     html,
   });
 

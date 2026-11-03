@@ -52,17 +52,33 @@ function actionBadge(action: string): string {
     WAIT: { bg: "#e74c3c", text: "#fff" },
   };
   const c = colors[action] || colors.HOLD;
-  return `<span style="background:${c.bg};color:${c.text};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;">${action}</span>`;
+  const label = ACTION_LABELS[action] ?? action;
+  return `<span style="background:${c.bg};color:${c.text};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;">${label}</span>`;
 }
+
+// Chinese display labels for the action enum (rendering only).
+const ACTION_LABELS: Record<string, string> = {
+  "STRONG BUY": "强烈买入",
+  BUY: "买入",
+  HOLD: "持有",
+  WAIT: "观望",
+  TRIM: "减持",
+};
+
+const AGREEMENT_LABELS: Record<string, string> = {
+  unanimous: "全体一致",
+  majority: "多数一致",
+  split: "意见分歧",
+};
 
 function triggerLabel(type: IntradayAlert["triggerType"]): string {
   switch (type) {
     case "action_upgrade":
-      return "Upgraded to STRONG BUY";
+      return "升级为强烈买入";
     case "action_downgrade":
-      return "Downgraded from STRONG BUY";
+      return "从强烈买入下调";
     case "confidence_change":
-      return "Confidence Changed";
+      return "置信度变化";
   }
 }
 
@@ -70,7 +86,7 @@ function priceDeltaHtml(delta: number): string {
   if (Math.abs(delta) < 0.01) return "";
   const color = delta < 0 ? S.green : S.red; // price drop = green (buying opp)
   const sign = delta > 0 ? "+" : "";
-  return `<span style="color:${color};font-size:12px;">Price ${sign}${delta.toFixed(1)}% since morning</span>`;
+  return `<span style="color:${color};font-size:12px;">早盘以来价格 ${sign}${delta.toFixed(1)}%</span>`;
 }
 
 const ratingColors: Record<string, string> = {
@@ -83,7 +99,7 @@ const ratingColors: Record<string, string> = {
 function valueRatingBadge(rating: string | undefined): string {
   if (!rating || rating === "") return "";
   const color = ratingColors[rating] || S.muted;
-  return `<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">Value ${rating}</span>`;
+  return `<span style="background:${color}22;color:${color};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">价值 ${rating}</span>`;
 }
 
 // ── Multi-AI compact breakdown (mirrors email.ts's daily badges) ─────
@@ -98,7 +114,8 @@ function agreementBadgeHtml(agreement: AIBuyRecommendation["agreement"]): string
     split: S.red,
   };
   const c = colors[agreement] ?? S.muted;
-  return `<span style="background:${c}22;color:${c};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">${agreement}</span>`;
+  const label = AGREEMENT_LABELS[agreement] ?? agreement;
+  return `<span style="background:${c}22;color:${c};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">${label}</span>`;
 }
 
 // A degraded run lost the cross-provider agreement STRONG BUY requires, so it
@@ -110,7 +127,7 @@ function degradedBadgeHtml(degradation: AIBuyRecommendation["degradation"]): str
   if (!degradation) return "";
   const label = formatDegradationLabel(degradation);
   const title = escapeHtmlAttr(
-    `${degradation.missing.join(", ")} did not respond — cross-provider agreement could not be verified on this run`,
+    `${degradation.missing.join(", ")} 未响应 — 本次运行无法验证跨 AI 一致性`,
   );
   return `<span title="${title}" style="background:${S.yellow}22;color:${S.yellow};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;margin-left:6px;">⚠ ${label}</span>`;
 }
@@ -134,9 +151,9 @@ function summarizeAlertDirection(alerts: IntradayAlert[]): string {
       a.triggerType === "action_downgrade" ||
       (a.triggerType === "confidence_change" && a.confidenceDelta < 0),
   );
-  if (hasStrengthened && hasWeakened) return "changed";
-  if (hasWeakened) return "weakened";
-  return "strengthened";
+  if (hasStrengthened && hasWeakened) return "有升有降";
+  if (hasWeakened) return "走弱";
+  return "走强";
 }
 
 // ── Build HTML ──────────────────────────────────────────────────────
@@ -148,12 +165,12 @@ export function buildIntradayEmailHtml(alerts: IntradayAlert[]): string {
     (a) => a.assetKind !== "crypto-cross" && a.originalCurrency !== defaultCurrency,
   );
   const headerCurrency = sharedCurrency(alerts);
-  const time = new Date().toLocaleTimeString("en-AU", {
+  const time = new Date().toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
-    hour12: true,
+    hour12: false,
   });
-  const date = new Date().toLocaleDateString("en-AU", {
+  const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
     day: "numeric",
     month: "short",
@@ -170,10 +187,10 @@ export function buildIntradayEmailHtml(alerts: IntradayAlert[]): string {
       <span style="float:right;font-size:11px;color:${S.yellow};text-transform:uppercase;">${triggerLabel(a.triggerType)}</span>
     </div>
     <div style="margin-bottom:6px;">
-      <span style="color:${S.muted};font-size:12px;">Morning:</span>
-      <span style="font-size:12px;color:${S.text};">${a.morningAction} ${a.morningConfidence}%</span>
+      <span style="color:${S.muted};font-size:12px;">早盘：</span>
+      <span style="font-size:12px;color:${S.text};">${ACTION_LABELS[a.morningAction] ?? a.morningAction} ${a.morningConfidence}%</span>
       <span style="color:${S.muted};font-size:12px;"> → </span>
-      <span style="font-size:13px;font-weight:bold;color:#fff;">${a.currentAction} ${a.currentConfidence}%</span>
+      <span style="font-size:13px;font-weight:bold;color:#fff;">${ACTION_LABELS[a.currentAction] ?? a.currentAction} ${a.currentConfidence}%</span>
       ${
         // Only show the numeric delta when the action stayed the same — comparing
         // confidence across action tiers (STRONG BUY 82% → BUY 67%) is misleading
@@ -187,10 +204,10 @@ export function buildIntradayEmailHtml(alerts: IntradayAlert[]): string {
     ${compactScoresHtml(a)}
     ${priceDeltaHtml(a.priceDelta) ? `<div style="margin-bottom:6px;">${priceDeltaHtml(a.priceDelta)}</div>` : ""}
     <div style="font-size:12px;color:${S.text};margin-bottom:4px;">${a.reason}</div>
-    ${a.suggestedBuyValue > 0 ? `<div style="font-size:13px;font-weight:bold;color:#fff;">Suggested: ${fmtAlert(a, a.suggestedBuyValue)}</div>` : ""}
-    ${alertHasStrongBuyVote(a) && a.suggestedLimitPrice && a.suggestedLimitPrice > 0 ? `<div style="font-size:12px;color:${S.green};margin-top:4px;">Limit order: ${fmtAlert(a, a.suggestedLimitPrice)}${a.limitPriceReason ? ` — ${a.limitPriceReason}` : ""}</div>` : ""}
-    ${a.bottomSignal && a.bottomSignal !== "" ? `<div style="font-size:11px;color:${S.yellow};margin-top:4px;">Bottom signal: ${a.bottomSignal}</div>` : ""}
-    ${alertHasStrongBuyVote(a) && a.analysisUrl ? `<div style="margin-top:8px;"><a href="${a.analysisUrl}" style="display:inline-block;background:#3498db22;color:#3498db;padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold;text-decoration:none;border:1px solid #3498db44;">More Details &rarr;</a></div>` : ""}
+    ${a.suggestedBuyValue > 0 ? `<div style="font-size:13px;font-weight:bold;color:#fff;">建议买入：${fmtAlert(a, a.suggestedBuyValue)}</div>` : ""}
+    ${alertHasStrongBuyVote(a) && a.suggestedLimitPrice && a.suggestedLimitPrice > 0 ? `<div style="font-size:12px;color:${S.green};margin-top:4px;">限价建议：${fmtAlert(a, a.suggestedLimitPrice)}${a.limitPriceReason ? ` — ${a.limitPriceReason}` : ""}</div>` : ""}
+    ${a.bottomSignal && a.bottomSignal !== "" ? `<div style="font-size:11px;color:${S.yellow};margin-top:4px;">见底信号：${a.bottomSignal}</div>` : ""}
+    ${alertHasStrongBuyVote(a) && a.analysisUrl ? `<div style="margin-top:8px;"><a href="${a.analysisUrl}" style="display:inline-block;background:#3498db22;color:#3498db;padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold;text-decoration:none;border:1px solid #3498db44;">查看详情 &rarr;</a></div>` : ""}
   </div>`,
     )
     .join("");
@@ -203,9 +220,9 @@ export function buildIntradayEmailHtml(alerts: IntradayAlert[]): string {
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:20px;color:${S.yellow};">Intraday Alert</h1>
-  <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date} at ${time}</p>
-  <p style="margin:4px 0 0;color:${S.text};font-size:12px;">${alerts.length} signal${alerts.length > 1 ? "s" : ""} ${summarizeAlertDirection(alerts)} since morning brief${headerCurrency ? ` · ${headerCurrency}` : ""}</p>
+  <h1 style="margin:0;font-size:20px;color:${S.yellow};">盘中信号告警</h1>
+  <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date} ${time}</p>
+  <p style="margin:4px 0 0;color:${S.text};font-size:12px;">较早盘简报 ${alerts.length} 个信号${summarizeAlertDirection(alerts)}${headerCurrency ? ` · ${headerCurrency}` : ""}</p>
 </td></tr>
 
 <!-- Alerts -->
@@ -216,14 +233,14 @@ export function buildIntradayEmailHtml(alerts: IntradayAlert[]): string {
 <!-- Footer -->
 <tr><td style="padding:12px 24px;background:${S.accent};border-radius:0 0 8px 8px;text-align:center;">
   <p style="margin:0;font-size:11px;color:${S.muted};">
-    Intraday check · Powered by Richfolio
+    盘中检查 · Powered by Richfolio
   </p>
 </td></tr>
 
 ${
   hasCrossCurrency
     ? `<tr><td style="padding:10px 24px;background:${S.cardBg};border-top:1px solid ${S.border};font-size:11px;color:${S.muted};">
-  Limit prices shown in ${defaultCurrency} — check your broker's quote currency before placing an order.
+  限价以 ${defaultCurrency} 计价 — 下单前请核对券商报价币种。
 </td></tr>`
     : ""
 }
@@ -241,7 +258,7 @@ export async function sendIntradayAlert(alerts: IntradayAlert[]): Promise<void> 
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",
     to: recipientEmail,
-    subject: `Richfolio Alert: ${tickers} signal ${summarizeAlertDirection(alerts)}`,
+    subject: `Richfolio 告警：${tickers} 信号${summarizeAlertDirection(alerts)}`,
     html,
   });
 
@@ -259,12 +276,12 @@ export async function sendRefreshEmail(
   quote: QuoteData,
   priceSource: string,
 ): Promise<void> {
-  const time = new Date().toLocaleTimeString("en-AU", {
+  const time = new Date().toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
-    hour12: true,
+    hour12: false,
   });
-  const date = new Date().toLocaleDateString("en-AU", {
+  const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
     day: "numeric",
     month: "short",
@@ -279,9 +296,9 @@ export async function sendRefreshEmail(
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:20px;color:${S.blue};">Refresh Analysis — ${ticker}</h1>
-  <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date} at ${time} · ${defaultCurrency}</p>
-  <p style="margin:4px 0 0;color:${S.text};font-size:12px;">Updated with ${priceSource} price</p>
+  <h1 style="margin:0;font-size:20px;color:${S.blue};">单独复检 — ${ticker}</h1>
+  <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date} ${time} · ${defaultCurrency}</p>
+  <p style="margin:4px 0 0;color:${S.text};font-size:12px;">已使用 ${priceSource} 价格更新</p>
 </td></tr>
 
 <!-- Content -->
@@ -290,20 +307,20 @@ export async function sendRefreshEmail(
     <span style="font-weight:bold;font-size:18px;color:#fff;" title="${escapeHtmlAttr(quote.longName ?? ticker)}">${ticker}</span>
     &nbsp;${actionBadge(rec.action)}${rec.valueRating ? valueRatingBadge(rec.valueRating) : ""}${isMultiAI(rec) ? agreementBadgeHtml(rec.agreement) : ""}${degradedBadgeHtml(rec.degradation)}
   </div>
-  <div style="font-size:13px;color:#fff;margin-bottom:6px;">Confidence: <strong>${rec.confidence}%</strong></div>
+  <div style="font-size:13px;color:#fff;margin-bottom:6px;">置信度：<strong>${rec.confidence}%</strong></div>
   ${compactScoresHtml(rec)}
-  <div style="font-size:13px;color:#fff;margin-bottom:8px;">Price: <strong>${fmt$(quote.price)}</strong> <span style="color:${S.muted};">(${priceSource})</span></div>
+  <div style="font-size:13px;color:#fff;margin-bottom:8px;">现价：<strong>${fmt$(quote.price)}</strong> <span style="color:${S.muted};">（${priceSource}）</span></div>
   <div style="font-size:12px;color:${S.text};margin-bottom:10px;">${rec.reason}</div>
-  ${rec.suggestedBuyValue > 0 ? `<div style="font-size:13px;font-weight:bold;color:#fff;margin-bottom:4px;">Suggested: ${fmt$(rec.suggestedBuyValue)}</div>` : ""}
-  ${rec.suggestedLimitPrice && rec.suggestedLimitPrice > 0 ? `<div style="font-size:12px;color:${S.green};margin-bottom:4px;">Limit order: ${fmt$(rec.suggestedLimitPrice)}${rec.limitPriceReason ? ` — ${rec.limitPriceReason}` : ""}</div>` : ""}
-  ${rec.bottomSignal ? `<div style="font-size:11px;color:${S.yellow};margin-bottom:4px;">Bottom signal: ${rec.bottomSignal}</div>` : ""}
-  ${rec.analysisUrl ? `<div style="margin-top:12px;"><a href="${rec.analysisUrl}" style="display:inline-block;background:#3498db22;color:#3498db;padding:6px 16px;border-radius:4px;font-size:12px;font-weight:bold;text-decoration:none;border:1px solid #3498db44;">Full Analysis &rarr;</a></div>` : ""}
+  ${rec.suggestedBuyValue > 0 ? `<div style="font-size:13px;font-weight:bold;color:#fff;margin-bottom:4px;">建议买入：${fmt$(rec.suggestedBuyValue)}</div>` : ""}
+  ${rec.suggestedLimitPrice && rec.suggestedLimitPrice > 0 ? `<div style="font-size:12px;color:${S.green};margin-bottom:4px;">限价建议：${fmt$(rec.suggestedLimitPrice)}${rec.limitPriceReason ? ` — ${rec.limitPriceReason}` : ""}</div>` : ""}
+  ${rec.bottomSignal ? `<div style="font-size:11px;color:${S.yellow};margin-bottom:4px;">见底信号：${rec.bottomSignal}</div>` : ""}
+  ${rec.analysisUrl ? `<div style="margin-top:12px;"><a href="${rec.analysisUrl}" style="display:inline-block;background:#3498db22;color:#3498db;padding:6px 16px;border-radius:4px;font-size:12px;font-weight:bold;text-decoration:none;border:1px solid #3498db44;">查看完整分析 &rarr;</a></div>` : ""}
 </td></tr>
 
 <!-- Footer -->
 <tr><td style="padding:12px 24px;background:${S.accent};border-radius:0 0 8px 8px;text-align:center;">
   <p style="margin:0;font-size:11px;color:${S.muted};">
-    Refresh analysis · Powered by Richfolio
+    单独复检 · Powered by Richfolio
   </p>
 </td></tr>
 
@@ -314,7 +331,7 @@ export async function sendRefreshEmail(
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",
     to: recipientEmail,
-    subject: `Richfolio Refresh: ${rec.action} ${ticker} (${rec.confidence}%)`,
+    subject: `Richfolio 复检：${ACTION_LABELS[rec.action] ?? rec.action} ${ticker}（${rec.confidence}%）`,
     html,
   });
 
