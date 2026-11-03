@@ -18,6 +18,7 @@ export const SUPPORTED_CURRENCIES: readonly string[] = [
   "HKD",
   "SGD",
   "NZD",
+  "CNY",
 ];
 
 // ── Types ───────────────────────────────────────────────────────────

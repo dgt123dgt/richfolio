@@ -216,6 +216,7 @@ const CURRENCY_FORMAT: Record<string, { prefix: string; decimals: number }> = {
   CHF: { prefix: "CHF ", decimals: 0 },
   HKD: { prefix: "HK$", decimals: 0 },
   SGD: { prefix: "S$", decimals: 0 },
+  CNY: { prefix: "¥", decimals: 0 },
 };
 
 export function formatMoney(amount: number, currency: string): string {

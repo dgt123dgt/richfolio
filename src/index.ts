@@ -22,7 +22,7 @@ import {
   sendIntradayTelegram,
   sendRefreshTelegram,
 } from "./telegram.js";
-import { applyLatestPrice, buildPriceMap } from "./util.js";
+import { applyLatestPrice, buildPriceMap, formatMoney } from "./util.js";
 import { sendWeeklyBrief } from "./weeklyEmail.js";
 import { saveBaseline, loadBaseline, loadReasoningHistory, saveReasoningHistory } from "./state.js";
 import { compareWithBaseline } from "./intradayCompare.js";
@@ -327,7 +327,7 @@ try {
 
   // Console summary
   console.log("═══ Portfolio Summary ═══");
-  console.log(`Holdings value: $${report.totalCurrentValue.toLocaleString()}`);
+  console.log(`Holdings value: ${formatMoney(report.totalCurrentValue, defaultCurrency)}`);
   if (report.portfolioBeta != null) {
     console.log(`Portfolio beta: ${report.portfolioBeta}`);
   }

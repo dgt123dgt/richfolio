@@ -669,6 +669,26 @@ INSTRUCTIONS:
      BTC." `;
 }
 
+// ── Output language directive ──────────────────────────────────────
+// REPORT_LANGUAGE=zh-CN makes providers write human-readable fields (signals,
+// risk flags, summaries, reasons) in that language. Structured values — action
+// enum ("STRONG BUY"/"BUY"/...), tickers, JSON keys, numbers — stay canonical
+// because guards, sorters and renderers string-match on them.
+export function languageDirective(): string {
+  const lang = (process.env.REPORT_LANGUAGE || "").trim();
+  if (!lang || /^en/i.test(lang)) return "";
+  if (/^zh/i.test(lang)) {
+    return `
+
+# OUTPUT LANGUAGE
+用简体中文撰写所有供人阅读的文本：value summary、technical summary、risk flags、signals、reason、allocation context 等。但以下内容保持原样、严禁翻译：股票代码、币种代码、数字、JSON 字段名，以及 action 枚举值（"STRONG BUY"/"BUY"/"HOLD"/"WAIT"/"TRIM"/"OK"）。`;
+  }
+  return `
+
+# OUTPUT LANGUAGE
+Write ALL human-readable text in "${lang}". Keep ticker symbols, currency codes, numbers, JSON keys and the action enum values unchanged.`;
+}
+
 // ── Stage 1: Observation prompt (Think — parse data, no decisions) ──
 export function buildObservationPrompt(
   report: AllocationReport,
@@ -713,7 +733,7 @@ For each ticker, identify:
 7. ALLOCATION CONTEXT — 1 sentence on the allocation gap (e.g. "3.2% underweight, needs $1600")
 
 Be precise. Reference actual numbers from the data. Do not editorialize or recommend actions.
-For bond ETFs, note that RSI/MACD/momentum are NOT valid signals — focus on rate environment and allocation gap.`;
+For bond ETFs, note that RSI/MACD/momentum are NOT valid signals — focus on rate environment and allocation gap.${languageDirective()}`;
 }
 
 // ── Stage 2: Decision prompt (Plan — decide from observations) ──
@@ -878,5 +898,5 @@ WAIT: Overvalued, risky, or no allocation need.
      analyst target. Do not penalise the absence.
    - A favourable price can come from the base coin falling OR the quote coin
      rallying — say which when the data supports it.
-11. Sort by confidence descending.`;
+11. Sort by confidence descending.${languageDirective()}`;
 }

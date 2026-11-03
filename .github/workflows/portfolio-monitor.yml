@@ -130,6 +130,7 @@ jobs:
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
           AI_DETAILED_PROVIDER: ${{ vars.AI_DETAILED_PROVIDER }}
           RECIPIENT_EMAIL: ${{ vars.RECIPIENT_EMAIL }}
+          REPORT_LANGUAGE: ${{ vars.REPORT_LANGUAGE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # Manual runs post only when post_social is ticked; scheduled dispatches always post.
@@ -152,6 +153,7 @@ jobs:
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RECIPIENT_EMAIL: ${{ vars.RECIPIENT_EMAIL }}
+          REPORT_LANGUAGE: ${{ vars.REPORT_LANGUAGE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
@@ -169,6 +171,7 @@ jobs:
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
           AI_DETAILED_PROVIDER: ${{ vars.AI_DETAILED_PROVIDER }}
           RECIPIENT_EMAIL: ${{ vars.RECIPIENT_EMAIL }}
+          REPORT_LANGUAGE: ${{ vars.REPORT_LANGUAGE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # Manual runs post only when post_social is ticked; scheduled dispatches always post.
@@ -199,6 +202,7 @@ jobs:
           CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
           AI_DETAILED_PROVIDER: ${{ vars.AI_DETAILED_PROVIDER }}
           RECIPIENT_EMAIL: ${{ vars.RECIPIENT_EMAIL }}
+          REPORT_LANGUAGE: ${{ vars.REPORT_LANGUAGE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 

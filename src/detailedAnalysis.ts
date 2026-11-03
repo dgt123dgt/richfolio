@@ -6,7 +6,7 @@ import type { TechnicalData } from "./fetchTechnicals.js";
 import type { AIBuyRecommendation } from "./aiAnalysis.js";
 import { defaultCurrency } from "./config.js";
 import { formatMoney, classifyEpsBasis, describeEpsBasis } from "./util.js";
-import { crossPairSemantics } from "./providers/prompts.js";
+import { crossPairSemantics, languageDirective } from "./providers/prompts.js";
 import { buildActiveProviders } from "./providers/index.js";
 import { mistralCall, mistralModel } from "./providers/mistral.js";
 import { GEMINI_MODEL } from "./providers/gemini.js";
@@ -195,6 +195,7 @@ function buildDetailedPrompt(
   );
   lines.push("");
   lines.push("Also list 3-4 specific risks to watch. Be concise and reference actual numbers.");
+  lines.push(languageDirective());
 
   return lines.join("\n");
 }
