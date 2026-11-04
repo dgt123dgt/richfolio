@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GEMINI_MODEL } from "./providers/gemini.js";
-import { toYahooTicker } from "./config.js";
+import { toYahooTicker, tickerNames } from "./config.js";
 import type { QuoteData } from "./fetchPrices.js";
 
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
@@ -43,6 +43,84 @@ function getSearchNames(ticker: string, priceData: Record<string, QuoteData>): s
   }
 
   return [];
+}
+
+// ── China A-share news (Eastmoney search API, keyless) ─────────────
+// NewsAPI's English sources barely cover A-share tickers, so they are routed
+// here instead. Keyword comes from config `tickerNames` ("恒生科技ETF" →
+// "恒生科技"), which the user maintains per ticker. Keyless JSONP endpoint,
+// mirrors the so.eastmoney.com web search.
+const EASTMONEY_SEARCH_URL = "https://search-api-web.eastmoney.com/search/jsonp";
+const EASTMONEY_PAGE_SIZE = 10;
+
+function isAshareTicker(ticker: string): boolean {
+  return /\.(SS|SZ)$/i.test(ticker);
+}
+
+/** Chinese search keyword for an A-share ticker, e.g. "恒生科技ETF" → "恒生科技". */
+function getChinaKeyword(ticker: string): string {
+  const name = tickerNames[ticker];
+  if (!name) return "";
+  return name.replace(/ETF$/i, "").trim();
+}
+
+interface EastmoneyArticle {
+  title: string;
+  date: string;
+  mediaName?: string;
+  url?: string;
+}
+
+async function fetchEastMoneyNews(ticker: string): Promise<NewsItem[]> {
+  const keyword = getChinaKeyword(ticker);
+  if (!keyword) {
+    console.warn(`  ${ticker}: no tickerNames entry — skipping Eastmoney news`);
+    return [];
+  }
+
+  const param = JSON.stringify({
+    uid: "",
+    keyword,
+    type: ["cmsArticleWebOld"],
+    client: "web",
+    clientType: "web",
+    clientVersion: "curr",
+    param: {
+      cmsArticleWebOld: {
+        searchScope: "default",
+        sort: "default",
+        pageIndex: 1,
+        pageSize: EASTMONEY_PAGE_SIZE,
+        preTag: "",
+        postTag: "",
+      },
+    },
+  });
+  const url = `${EASTMONEY_SEARCH_URL}?cb=cb&param=${encodeURIComponent(param)}`;
+
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      Referer: "https://so.eastmoney.com/",
+    },
+  });
+  if (!res.ok) throw new Error(`Eastmoney ${res.status}`);
+
+  // Response is JSONP: `cb({...})`. Strip the wrapper before parsing.
+  const text = await res.text();
+  const match = text.match(/^cb\((.*)\)$/s);
+  if (!match) throw new Error("Eastmoney: unexpected non-JSONP response");
+  const json = JSON.parse(match[1]) as {
+    result?: { cmsArticleWebOld?: EastmoneyArticle[] };
+  };
+  const articles = json.result?.cmsArticleWebOld ?? [];
+
+  return articles.slice(0, MAX_ARTICLES_PER_TICKER).map((a) => ({
+    title: a.title,
+    url: a.url ?? "",
+    source: a.mediaName ?? "东方财富",
+    publishedAt: a.date,
+  }));
 }
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -186,12 +264,14 @@ async function filterNewsWithGemini(
 
   const prompt = `You are a financial news relevance filter for an investment portfolio tracker. For each ticker below, determine which headlines are actually about the company/fund's financial context: stock performance, earnings, market analysis, sector trends, company strategy, M&A, regulatory impact, or macroeconomic effects on the ticker.
 
+Headlines may be in English or Chinese — both are expected (Chinese ones come from Eastmoney for A-share tickers); judge them the same way.
+
 REMOVE headlines that are:
 - Shopping/product/deal articles (e.g. "best deals on Amazon", "Dutch ovens under $50 on Amazon" — these are about the marketplace, not the stock)
 - Lifestyle, food, fashion, or consumer product reviews that merely mention a brand/platform
 - Animal, science, sports, or entertainment articles where the keyword match is coincidental (e.g. "bond" matching animal bonding, not bond markets)
 - Ads, sponsored content, or affiliate/deal roundups
-- Non-English articles that slipped through filters
+- ETF price-announcement roundups for a DIFFERENT ETF that merely appeared in the same market-wrap article
 
 KEEP only headlines about: stock price, earnings, revenue, analyst ratings, market trends, company leadership, regulatory news, sector performance, fund flows, or economic indicators relevant to the ticker.
 
@@ -301,17 +381,36 @@ export async function fetchNews(
   tickers: string[],
   priceData: Record<string, QuoteData> = {},
 ): Promise<Record<string, NewsItem[]>> {
-  if (!NEWS_API_KEY) {
+  // A-share tickers route to Eastmoney (keyless, Chinese sources); the rest to
+  // NewsAPI. Skipping NewsAPI for A-shares also saves its 100 req/day quota.
+  const chinaTickers = tickers.filter(isAshareTicker);
+  const newsApiTickers = tickers.filter((t) => !isAshareTicker(t));
+
+  if (!NEWS_API_KEY && chinaTickers.length === 0) {
     console.warn("NEWS_API_KEY not set — skipping news fetch\n");
     return Object.fromEntries(tickers.map((t) => [t, []]));
   }
 
-  console.log(`Fetching news for ${tickers.length} tickers...`);
+  console.log(`Fetching news for ${tickers.length} tickers (${chinaTickers.length} via Eastmoney)...`);
   const allNews: Record<string, NewsItem[]> = {};
 
-  // Batch tickers to reduce API calls
-  for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
-    const batch = tickers.slice(i, i + BATCH_SIZE);
+  // A-share tickers: Eastmoney, one request per ticker
+  for (const ticker of chinaTickers) {
+    allNews[ticker] = [];
+    try {
+      const articles = await fetchEastMoneyNews(ticker);
+      allNews[ticker] = articles;
+      if (articles.length > 0) {
+        console.log(`  ${ticker}: ${articles.length} Chinese articles (Eastmoney)`);
+      }
+    } catch (err) {
+      console.error(`  ✗ Eastmoney news [${ticker}] failed:`, (err as Error).message);
+    }
+  }
+
+  // Non-A-share tickers: NewsAPI in batches
+  for (let i = 0; i < newsApiTickers.length; i += BATCH_SIZE) {
+    const batch = newsApiTickers.slice(i, i + BATCH_SIZE);
     try {
       const batchNews = await fetchBatch(batch, priceData);
       Object.assign(allNews, batchNews);
