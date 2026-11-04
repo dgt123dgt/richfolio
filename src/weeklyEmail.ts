@@ -1,22 +1,22 @@
 import { Resend } from "resend";
-import { recipientEmail, defaultCurrency } from "./config.js";
+import { recipientEmail, defaultCurrency, displayName } from "./config.js";
 import type { AllocationItem, AllocationReport } from "./analyze.js";
 import { escapeHtmlAttr, formatMoney } from "./util.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// ── Styles (same dark theme as daily email) ─────────────────────────
+// ── Styles (light, cheerful theme — matches daily email) ────────────
 const S = {
-  bg: "#1a1a2e",
-  cardBg: "#16213e",
-  text: "#e0e0e0",
-  muted: "#8a8a9a",
-  accent: "#0f3460",
-  green: "#2ecc71",
-  red: "#e74c3c",
-  yellow: "#f39c12",
-  blue: "#3498db",
-  border: "#2a2a4a",
+  bg: "#eff6ff",
+  cardBg: "#ffffff",
+  text: "#334155",
+  muted: "#64748b",
+  accent: "#0ea5e9",
+  green: "#22c55e",
+  red: "#ef4444",
+  yellow: "#f59e0b",
+  blue: "#3b82f6",
+  border: "#e2e8f0",
 } as const;
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -66,8 +66,8 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:22px;color:#fff;">每周再平衡报告</h1>
-  <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date}</p>
+  <h1 style="margin:0;font-size:22px;color:#ffffff;">每周再平衡报告</h1>
+  <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date}</p>
 </td></tr>
 
 <!-- Portfolio Stats -->
@@ -75,11 +75,11 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
     <td style="text-align:center;padding:8px;">
       <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">持仓市值（${defaultCurrency}）</div>
-      <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.totalCurrentValue)}</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${fmt$(report.totalCurrentValue)}</div>
     </td>
     <td style="text-align:center;padding:8px;">
       <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">组合 Beta</div>
-      <div style="font-size:20px;font-weight:bold;color:#fff;">${report.portfolioBeta?.toFixed(2) ?? "—"}</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${report.portfolioBeta?.toFixed(2) ?? "—"}</div>
     </td>
     <td style="text-align:center;padding:8px;">
       <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">达标数量</div>
@@ -87,7 +87,7 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
     </td>
     <td style="text-align:center;padding:8px;">
       <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">预估年股息</div>
-      <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.estimatedAnnualDividend)}</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${fmt$(report.estimatedAnnualDividend)}</div>
     </td>
   </tr></table>
 </td></tr>
@@ -100,7 +100,7 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
     <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">代码</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">名称</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:center;">操作</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">当前</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">目标</td>
@@ -113,7 +113,7 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
         const action = actionLabel(item.gapPct);
         return `
     <tr>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(item.tickerFullName ?? item.ticker)}">${item.ticker}</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(item.tickerFullName ?? item.ticker)}">${displayName(item.ticker, item.tickerFullName)}<div style="font-size:10px;color:${S.muted};font-weight:normal;">${item.ticker}</div></td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:center;">
         <span style="background:${action.color};color:#000;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;">${action.text}</span>
       </td>
@@ -134,7 +134,7 @@ ${
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-top:1px solid ${S.border};">
   <h3 style="margin:0;font-size:14px;color:${S.yellow};">⚠ 超配持仓</h3>
   <p style="margin:4px 0 0;font-size:12px;color:${S.text};">
-    ${overweight.map((i) => `<b>${i.ticker}</b>（当前 ${i.currentPct.toFixed(1)}% vs 目标 ${i.targetPct.toFixed(1)}%）`).join("，")}
+    ${overweight.map((i) => `<b>${displayName(i.ticker, i.tickerFullName)}</b>（${i.ticker}，当前 ${i.currentPct.toFixed(1)}% vs 目标 ${i.targetPct.toFixed(1)}%）`).join("，")}
   </p>
 </td></tr>`
     : ""
@@ -147,7 +147,7 @@ ${
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-top:1px solid ${S.border};">
   <h3 style="margin:0;font-size:14px;color:${S.muted};">未纳入目标组合的持仓</h3>
   <p style="margin:4px 0 0;font-size:12px;color:${S.text};">
-    ${noTarget.map((i) => `<b>${i.ticker}</b> (${fmt$(i.currentValue)}, ${i.currentPct.toFixed(1)}%)`).join(", ")}
+    ${noTarget.map((i) => `<b>${displayName(i.ticker, i.tickerFullName)}</b>（${i.ticker}，${fmt$(i.currentValue)}，${i.currentPct.toFixed(1)}%）`).join("，")}
   </p>
 </td></tr>`
     : ""
@@ -163,7 +163,7 @@ ${
 
 <!-- Footer -->
 <tr><td style="padding:16px 24px;background:${S.accent};border-radius:0 0 8px 8px;text-align:center;">
-  <p style="margin:0;font-size:11px;color:${S.muted};">
+  <p style="margin:0;font-size:11px;color:#e0f2fe;">
     修改 CONFIG_JSON 变量可更新你的投资组合 · Powered by Richfolio
   </p>
 </td></tr>

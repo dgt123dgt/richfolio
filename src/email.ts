@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { recipientEmail, defaultCurrency } from "./config.js";
+import { recipientEmail, defaultCurrency, displayName } from "./config.js";
 import type { AllocationItem, AllocationReport } from "./analyze.js";
 import type { AIBuyRecommendation } from "./aiAnalysis.js";
 import type { NewsItem } from "./fetchNews.js";
@@ -10,18 +10,18 @@ import { hasStrongBuyVote } from "./aiAggregation.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// ── Styles ──────────────────────────────────────────────────────────
+// ── Styles (light, cheerful theme) ──────────────────────────────────
 const S = {
-  bg: "#1a1a2e",
-  cardBg: "#16213e",
-  text: "#e0e0e0",
-  muted: "#8a8a9a",
-  accent: "#0f3460",
-  green: "#2ecc71",
-  red: "#e74c3c",
-  yellow: "#f39c12",
-  blue: "#3498db",
-  border: "#2a2a4a",
+  bg: "#eff6ff",
+  cardBg: "#ffffff",
+  text: "#334155",
+  muted: "#64748b",
+  accent: "#0ea5e9",
+  green: "#22c55e",
+  red: "#ef4444",
+  yellow: "#f59e0b",
+  blue: "#3b82f6",
+  border: "#e2e8f0",
 } as const;
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -288,10 +288,11 @@ function buildAISection(
             (rec) => `
   <div style="padding:10px 0;border-bottom:1px solid ${S.border};">
     <div style="margin-bottom:4px;">
-      <span style="font-weight:bold;font-size:14px;color:#fff;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${rec.ticker}</span>
+      <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
+      <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
       &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
       &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}
-      ${rec.suggestedBuyValue > 0 ? `<span style="float:right;font-weight:bold;color:#fff;">${fmt$(rec.suggestedBuyValue)}</span>` : ""}
+      ${rec.suggestedBuyValue > 0 ? `<span style="float:right;font-weight:bold;color:#1a202c;">${fmt$(rec.suggestedBuyValue)}</span>` : ""}
     </div>
     <div style="font-size:12px;color:${S.text};margin-top:4px;">${rec.reason}</div>
     ${buildProvidersBreakdown(rec)}
@@ -318,7 +319,7 @@ function buildAISection(
       .map(
         (rec) => `
     <div style="padding:4px 0;font-size:12px;">
-      <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${rec.ticker}</span>
+      <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
       &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}
       <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
     </div>`,
@@ -338,7 +339,8 @@ function buildAISection(
         (rec) => `
     <div style="padding:10px 0;border-bottom:1px solid ${S.border};">
       <div style="margin-bottom:4px;">
-        <span style="font-weight:bold;font-size:14px;color:#fff;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${rec.ticker}</span>
+        <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
+      <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
         &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
         &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}
       </div>
@@ -364,7 +366,7 @@ function buildAISection(
         .map(
           (rec) => `
       <div style="padding:4px 0;font-size:12px;">
-        <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${rec.ticker}</span>
+        <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
         &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}
         <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
       </div>`,
@@ -392,7 +394,7 @@ function buildFallbackBuysSection(report: AllocationReport): string {
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;">
     <tr style="color:${S.muted};font-size:11px;text-transform:uppercase;">
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};">代码</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};">名称</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">缺口</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">建议股数</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">建议金额</td>
@@ -403,7 +405,7 @@ function buildFallbackBuysSection(report: AllocationReport): string {
       .map(
         (b) => `
     <tr>
-      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(b.tickerFullName ?? b.ticker)}">${b.ticker}</td>
+      <td style="padding:6px 4px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(b.tickerFullName ?? b.ticker)}">${displayName(b.ticker, b.tickerFullName)}<div style="font-size:10px;color:${S.muted};font-weight:normal;">${b.ticker}</div></td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;color:${S.red};">${fmtPct(b.gapPct)}</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">${b.suggestedBuyShares.toFixed(1)}</td>
       <td style="padding:6px 4px;border-bottom:1px solid ${S.border};text-align:right;">${fmt$(b.suggestedBuyValue)}${b.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(b.overlapDiscount)} 重合扣减</div>` : ""}</td>
@@ -457,8 +459,8 @@ export function buildEmailHtml(
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:22px;color:#fff;">Richfolio 每日简报</h1>
-  <p style="margin:6px 0 0;color:${S.muted};font-size:13px;">${date}</p>
+  <h1 style="margin:0;font-size:22px;color:#ffffff;">Richfolio 每日简报</h1>
+  <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date}</p>
 </td></tr>
 
 <!-- Portfolio Stats -->
@@ -466,15 +468,15 @@ export function buildEmailHtml(
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
     <td style="text-align:center;padding:8px;">
       <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">持仓市值（${defaultCurrency}）</div>
-      <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.totalCurrentValue)}</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${fmt$(report.totalCurrentValue)}</div>
     </td>
     <td style="text-align:center;padding:8px;">
       <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">组合 Beta</div>
-      <div style="font-size:20px;font-weight:bold;color:#fff;">${report.portfolioBeta?.toFixed(2) ?? "—"}</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${report.portfolioBeta?.toFixed(2) ?? "—"}</div>
     </td>
     <td style="text-align:center;padding:8px;">
       <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">预估年股息</div>
-      <div style="font-size:20px;font-weight:bold;color:#fff;">${fmt$(report.estimatedAnnualDividend)}</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${fmt$(report.estimatedAnnualDividend)}</div>
     </td>
   </tr></table>
 </td></tr>
@@ -489,7 +491,7 @@ ${buysSection}
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
     <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">代码</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">名称</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">当前</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">目标</td>
@@ -503,7 +505,7 @@ ${buysSection}
       .map(
         (item) => `
     <tr>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(item.tickerFullName ?? item.ticker)}">${item.ticker}</td>
+      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(item.tickerFullName ?? item.ticker)}">${displayName(item.ticker, item.tickerFullName)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${item.ticker}</div></td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${fmt$(item.price)}</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.currentPct.toFixed(1)}%</td>
       <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.targetPct.toFixed(1)}%</td>
@@ -530,7 +532,7 @@ ${
     .map(
       ([ticker, articles]) => `
   <div style="margin-bottom:12px;">
-    <div style="font-weight:bold;font-size:13px;color:#fff;margin-bottom:4px;">${ticker}</div>
+    <div style="font-weight:bold;font-size:13px;color:#1a202c;margin-bottom:4px;">${displayName(ticker)} <span style="font-size:10px;color:${S.muted};font-weight:normal;">${ticker}</span></div>
     ${articles
       .map(
         (a) => `
@@ -569,7 +571,7 @@ ${
 
 <!-- Footer -->
 <tr><td style="padding:16px 24px;background:${S.accent};border-radius:0 0 8px 8px;text-align:center;">
-  <p style="margin:0;font-size:11px;color:${S.muted};">
+  <p style="margin:0;font-size:11px;color:#e0f2fe;">
     修改 CONFIG_JSON 变量可更新你的投资组合 · Powered by Richfolio
   </p>
 </td></tr>

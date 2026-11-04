@@ -45,6 +45,12 @@ export interface PortfolioConfig {
   currentHoldings: Record<string, number>;
   totalPortfolioValue: number;
   defaultCurrency?: string;
+  /**
+   * Optional ticker → display-name map (e.g. "513180.SS": "恒生科技ETF").
+   * Rendered alongside the raw symbol in emails/console so human readers can
+   * identify each position. Falls back to the quote's longName, then the ticker.
+   */
+  tickerNames?: Record<string, string>;
   intradayAlerts?: Partial<IntradayAlertConfig>;
   /**
    * Tickers tracked but NOT in your target portfolio. They get fetched, scored,
@@ -136,6 +142,7 @@ export interface ParsedConfig {
   currentHoldings: Record<string, number>;
   totalPortfolioValue: number;
   defaultCurrency: string;
+  tickerNames: Record<string, string>;
   watchingTickers: string[];
   cryptoPairSpecs: CryptoPairSpec[];
   intradayAlerts: IntradayAlertConfig;
@@ -225,11 +232,28 @@ export function parsePortfolioConfig(json: unknown): ParsedConfig {
     );
   }
 
+  // Optional friendly names. Non-object → warn+ignore; non-string values are
+  // skipped rather than thrown — a bad name entry should never kill a run.
+  let tickerNames: Record<string, string> = {};
+  const rawTickerNames = json.tickerNames;
+  if (rawTickerNames !== undefined) {
+    if (isPlainObject(rawTickerNames)) {
+      tickerNames = Object.fromEntries(
+        Object.entries(rawTickerNames).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0,
+        ),
+      );
+    } else {
+      warnings.push('config.json: ignoring "tickerNames" — must be an object of ticker → name.');
+    }
+  }
+
   return {
     targetPortfolio,
     currentHoldings,
     totalPortfolioValue: json.totalPortfolioValue,
     defaultCurrency,
+    tickerNames,
     watchingTickers,
     cryptoPairSpecs,
     intradayAlerts: { ...DEFAULT_ALERTS, ...(json.intradayAlerts as object | undefined) },

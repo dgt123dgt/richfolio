@@ -45,6 +45,15 @@ export const cryptoPairTickers: string[] = cryptoPairSpecs.map((s) => s.ticker);
 export const watchingSet = new Set<string>([...watchingTickers, ...cryptoPairTickers]);
 export const totalPortfolioValue = parsed.totalPortfolioValue;
 export const defaultCurrency = parsed.defaultCurrency;
+export const tickerNames: Record<string, string> = parsed.tickerNames;
+
+/**
+ * Friendly display name for a ticker: config `tickerNames` first, then the
+ * quote's longName, then the raw symbol. Pure — renderers compose HTML around it.
+ */
+export function displayName(ticker: string, fullName?: string | null): string {
+  return tickerNames[ticker] ?? fullName ?? ticker;
+}
 export const intradayConfig = parsed.intradayAlerts;
 export const cryptoAlertConfig = parsed.cryptoAlerts;
 export const socialConfig = parsed.social;
