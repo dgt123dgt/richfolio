@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GEMINI_MODEL } from "./providers/gemini.js";
-import { toYahooTicker, tickerNames } from "./config.js";
+import { toYahooTicker, tickerNames, runtimeTickerNames } from "./config.js";
 import type { QuoteData } from "./fetchPrices.js";
 
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
@@ -59,7 +59,8 @@ function isAshareTicker(ticker: string): boolean {
 
 /** Chinese search keyword for an A-share ticker, e.g. "恒生科技ETF" → "恒生科技". */
 function getChinaKeyword(ticker: string): string {
-  const name = tickerNames[ticker];
+  // Hot stocks carry their name in runtimeTickerNames (not user-maintained config).
+  const name = tickerNames[ticker] ?? runtimeTickerNames[ticker];
   if (!name) return "";
   return name.replace(/ETF$/i, "").trim();
 }

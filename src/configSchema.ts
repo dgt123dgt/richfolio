@@ -51,6 +51,8 @@ export interface PortfolioConfig {
    * identify each position. Falls back to the quote's longName, then the ticker.
    */
   tickerNames?: Record<string, string>;
+  /** Daily hot-stock tracking (Guba popularity). See HotStocksConfig. */
+  hotStocks?: HotStocksConfig;
   intradayAlerts?: Partial<IntradayAlertConfig>;
   /**
    * Tickers tracked but NOT in your target portfolio. They get fetched, scored,
@@ -137,12 +139,25 @@ export const DEFAULT_ALERTS: IntradayAlertConfig = {
   minPriceMovePctToAlert: 1.0,
 };
 
+export interface HotStocksConfig {
+  /** Inject the day's Guba-popularity top-N A-share stocks into the watch list. Default true. */
+  enabled?: boolean;
+  /** How many hot stocks to track (1-20). Default 10. */
+  count?: number;
+}
+
+export const DEFAULT_HOT_STOCKS: Required<HotStocksConfig> = {
+  enabled: true,
+  count: 10,
+};
+
 export interface ParsedConfig {
   targetPortfolio: Record<string, number>;
   currentHoldings: Record<string, number>;
   totalPortfolioValue: number;
   defaultCurrency: string;
   tickerNames: Record<string, string>;
+  hotStocks: Required<HotStocksConfig>;
   watchingTickers: string[];
   cryptoPairSpecs: CryptoPairSpec[];
   intradayAlerts: IntradayAlertConfig;
@@ -254,6 +269,7 @@ export function parsePortfolioConfig(json: unknown): ParsedConfig {
     totalPortfolioValue: json.totalPortfolioValue,
     defaultCurrency,
     tickerNames,
+    hotStocks: { ...DEFAULT_HOT_STOCKS, ...(json.hotStocks as object | undefined) },
     watchingTickers,
     cryptoPairSpecs,
     intradayAlerts: { ...DEFAULT_ALERTS, ...(json.intradayAlerts as object | undefined) },

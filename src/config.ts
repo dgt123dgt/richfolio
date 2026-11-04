@@ -46,13 +46,20 @@ export const watchingSet = new Set<string>([...watchingTickers, ...cryptoPairTic
 export const totalPortfolioValue = parsed.totalPortfolioValue;
 export const defaultCurrency = parsed.defaultCurrency;
 export const tickerNames: Record<string, string> = parsed.tickerNames;
+export const hotStockConfig = parsed.hotStocks;
+
+// Populated at runtime by dynamic watch-list sources (currently fetchHotStocks):
+// Guba hot stocks enter the watch list for one run and their Chinese names live
+// here so renderers and news keywords can use them without touching config.
+export const runtimeTickerNames: Record<string, string> = {};
 
 /**
- * Friendly display name for a ticker: config `tickerNames` first, then the
- * quote's longName, then the raw symbol. Pure — renderers compose HTML around it.
+ * Friendly display name for a ticker: config `tickerNames` first, then runtime
+ * names (hot stocks), then the quote's longName, then the raw symbol. Pure —
+ * renderers compose HTML around it.
  */
 export function displayName(ticker: string, fullName?: string | null): string {
-  return tickerNames[ticker] ?? fullName ?? ticker;
+  return tickerNames[ticker] ?? runtimeTickerNames[ticker] ?? fullName ?? ticker;
 }
 export const intradayConfig = parsed.intradayAlerts;
 export const cryptoAlertConfig = parsed.cryptoAlerts;
@@ -89,6 +96,8 @@ export function allUniqueTickers(): string[] {
       ...Object.keys(targetPortfolio),
       ...Object.keys(currentHoldings),
       ...watchingTickers,
+      // Runtime additions (Guba hot stocks) land in the Set via index.ts.
+      ...watchingSet,
     ]),
   ];
 }

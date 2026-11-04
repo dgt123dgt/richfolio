@@ -4,7 +4,11 @@ import {
   cryptoAlertConfig,
   cryptoPairSpecs,
   defaultCurrency,
+  hotStockConfig,
+  watchingSet,
+  runtimeTickerNames,
 } from "./config.js";
+import { fetchHotAshareStocks } from "./fetchHotStocks.js";
 import { fetchCryptoPairs } from "./fetchCrypto.js";
 import { computeTechnicals } from "./technicals.js";
 import type { TimedCandle } from "./fetchCrypto.js";
@@ -264,6 +268,23 @@ if (isCrypto) {
 }
 
 try {
+  // Daily hot stocks: the Guba popularity top-N joins the watch list for this
+  // run (daily + intraday; weekly only rebalances the fixed portfolio). Names
+  // land in runtimeTickerNames for emails and Eastmoney news keywords.
+  if (hotStockConfig.enabled && !isWeekly && !isRefresh) {
+    try {
+      const hot = await fetchHotAshareStocks(hotStockConfig.count);
+      for (const h of hot) {
+        watchingSet.add(h.ticker);
+        if (h.name) runtimeTickerNames[h.ticker] = h.name;
+        console.log(`  热度榜 #${h.rank}: ${h.name || h.ticker} (${h.ticker})`);
+      }
+      if (hot.length > 0) console.log(`Added ${hot.length} hot stocks to watch list`);
+    } catch (err) {
+      console.warn(`⚠ Hot-stock fetch failed, continuing without: ${(err as Error).message}`);
+    }
+  }
+
   const tickers = allUniqueTickers();
   const [priceResult, macroIndicators] = await Promise.all([
     fetchPrices(tickers, defaultCurrency),
