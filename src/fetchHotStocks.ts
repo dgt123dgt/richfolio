@@ -9,6 +9,8 @@ import { runtimeTickerNames } from "./config.js";
 
 const RANK_URL = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList";
 const NAME_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get";
+// Over-fetch: thresholded-board codes get filtered out before taking `count`.
+const RANK_FETCH_SIZE = 50;
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   Referer: "https://guba.eastmoney.com/",
@@ -18,6 +20,18 @@ export interface HotStock {
   ticker: string;
   name: string;
   rank: number;
+}
+
+/**
+ * Only SH/SZ main board (600/601/603/605, 000/001/002/003) — boards an ordinary
+ * cash account can trade without thresholds:
+ *   创业板 300/301/302 — needs 2y experience + ¥100k; 科创板 688/689 — ¥500k;
+ *   北交所 (BJ prefix / 4/8/9 codes) — ¥500k, dropped by toConfigTicker already.
+ */
+function isMainBoard(sc: string): boolean {
+  if (sc.startsWith("SH")) return /^60[0135]/.test(sc.slice(2));
+  if (sc.startsWith("SZ")) return /^00[0-3]/.test(sc.slice(2));
+  return false;
 }
 
 /** "SH600519" → "600519.SS", "SZ000651" → "000651.SZ". BJ (北交所) etc. → null. */
@@ -42,13 +56,13 @@ export async function fetchHotAshareStocks(count: number): Promise<HotStock[]> {
       globalId: "786e4c21-70dc-435a-93bb-38",
       marketType: "",
       pageNo: 1,
-      pageSize: count,
+      pageSize: RANK_FETCH_SIZE,
     }),
   });
   if (!res.ok) throw new Error(`Guba rank ${res.status}`);
 
   const json = (await res.json()) as { data?: Array<{ sc: string; rk: number }> };
-  const rows = json.data ?? [];
+  const rows = (json.data ?? []).filter((row) => isMainBoard(row.sc));
 
   const stocks: HotStock[] = [];
   for (const row of rows) {
