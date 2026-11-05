@@ -471,6 +471,21 @@ describe("computeTechnicals", () => {
     assert.equal(r.recentGain5d, 10);
   });
 
+  test("computes the 1-year gain and the 2-year limit-up count for the 老龙头 screen", () => {
+    // 300 sessions: 200 flat at 50, then +1/session — the last close (150) is
+    // 3× the close 252 bars back, and the climb never prints a limit-up.
+    const closes: number[] = [...new Array(200).fill(50), ...Array.from({ length: 100 }, (_, i) => 50 + i)];
+    const r = computeTechnicals("TEST", makeCandles(closes))!;
+    assert.equal(r.limitUpDays2y, 0);
+    assert.ok(r.yearGainPct != null && r.yearGainPct > 100, "year gain computed over 252 bars");
+
+    // One limit-up day somewhere in history must be counted.
+    const withLimit = [...closes];
+    withLimit[100] = 55; // +10% versus closes[99]
+    const r2 = computeTechnicals("TEST", makeCandles(withLimit))!;
+    assert.equal(r2.limitUpDays2y, 1);
+  });
+
   test("is invariant to unit scaling for unitless indicators", () => {
     // A cross-pair priced ~1.3M in CRO must produce the same RSI/%B/Stoch/ATR%
     // as the same shape priced ~100 in USD — only absolute levels differ. Note

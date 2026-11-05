@@ -24,7 +24,9 @@ async function fetchOne(
   try {
     const now = new Date();
     const period1 = new Date(now);
-    period1.setDate(period1.getDate() - 365); // ~250 trading days
+    // Two years of daily bars — needed for the 老龙头 screen ("过去一年涨幅
+    // >100%、过去两年涨停天数>15"), not just the 50/200-day averages.
+    period1.setDate(period1.getDate() - 750);
 
     const result = await yahooFinance.chart(yahooTicker, {
       period1,

@@ -80,6 +80,11 @@ export interface TechnicalData {
   // Cumulative % change over the last 5 sessions. Momentum context that also
   // tells a steady trend apart from a parabolic run.
   recentGain5d: number | null;
+  // Trailing 1-year gain (%) — "老龙头" evidence alongside limitUpDays2y.
+  yearGainPct: number | null;
+  // Limit-up sessions across the available (≤2-year) daily history — the
+  // "过去两年涨停天数" half of the 老龙头 screen.
+  limitUpDays2y: number;
 }
 
 // ── Computation helpers ─────────────────────────────────────────────
@@ -450,6 +455,25 @@ export function computeTechnicals(
     }
   }
 
+  // Trailing 1-year gain, measured against the close ~252 sessions back.
+  let yearGainPct: number | null = null;
+  if (closes.length > 252) {
+    const base = closes[closes.length - 252];
+    if (base > 0) {
+      yearGainPct =
+        Math.round(((closes[closes.length - 1] - base) / base) * 1000) / 10;
+    }
+  }
+
+  // Limit-up session count across the whole (≤2-year) series — the second half
+  // of the 老龙头 screen ("过去两年涨停天数"). First bar has no predecessor.
+  let limitUpDays2y = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const prev = closes[i - 1];
+    if (prev <= 0) continue;
+    if (((closes[i] - prev) / prev) * 100 >= 9.5) limitUpDays2y++;
+  }
+
   return {
     ticker,
     sma50: Math.round(sma50 * 100) / 100,
@@ -483,5 +507,7 @@ export function computeTechnicals(
     priceChange1d,
     consecutiveLimitUps,
     recentGain5d,
+    yearGainPct,
+    limitUpDays2y,
   };
 }

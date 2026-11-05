@@ -59,6 +59,19 @@ const AGREEMENT_LABELS: Record<string, string> = {
 const fmtRec = (rec: AIBuyRecommendation, n: number) =>
   formatMoney(n, rec.quoteCurrency ?? defaultCurrency);
 
+// 早/中/晚 slot of the brief, from Beijing wall-clock at send time:
+// 05:00–10:59 早, 11:00–16:59 中, otherwise 晚.
+function briefPeriod(): string {
+  const hour = Number(
+    new Date().toLocaleString("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      hour: "numeric",
+      hour12: false,
+    }),
+  );
+  return hour >= 5 && hour < 11 ? "早" : hour >= 11 && hour < 17 ? "中" : "晚";
+}
+
 function fmtPct(n: number): string {
   return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
 }
@@ -437,6 +450,7 @@ export function buildEmailHtml(
   priceData: Record<string, QuoteData> = {},
   fxSkipped: Array<{ ticker: string; reason: string }> = [],
   hotNews: NewsItem[] = [],
+  nationalTeam: ReadonlySet<string> = new Set(),
 ): string {
   const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
@@ -475,7 +489,9 @@ export function buildEmailHtml(
   // carries the whole brief, so it is rendered at the very end — after the AI
   // picks and the news — instead of pushing them down.
   const hasPortfolio = report.items.length > 0;
-  const techScreenBlock = hasPortfolio ? "" : techScreenSection(technicals, priceData);
+  const techScreenBlock = hasPortfolio
+    ? ""
+    : techScreenSection(technicals, priceData, nationalTeam);
   const statsSection = hasPortfolio
     ? `
 <!-- Portfolio Stats -->
@@ -505,7 +521,7 @@ export function buildEmailHtml(
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:22px;color:#ffffff;">Richfolio 每日简报</h1>
+  <h1 style="margin:0;font-size:22px;color:#ffffff;">Richfolio 每日简报（${briefPeriod()}）</h1>
   <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date}</p>
 </td></tr>
 
@@ -666,25 +682,41 @@ const CHIP_LIMIT_UP: Omit<StatusChip, "text"> = {
   bg: "#fee2e2",
   fg: "#b91c1c",
   rowBg: "#fef2f2",
-  priority: 3,
+  priority: 5,
 };
 const CHIP_LIMIT_DOWN: Omit<StatusChip, "text"> = {
   bg: "#dcfce7",
   fg: "#15803d",
   rowBg: "#f0fdf4",
-  priority: 2,
+  priority: 4,
 };
 const CHIP_DEMON: Omit<StatusChip, "text"> = {
   bg: "#ede9fe",
   fg: "#6d28d9",
   rowBg: "#f5f3ff",
-  priority: 4,
+  priority: 6,
 };
 const CHIP_WHITE_HORSE: Omit<StatusChip, "text"> = {
   bg: "#fef3c7",
   fg: "#b45309",
   rowBg: "#fffbeb",
   priority: 1,
+};
+// 老龙头 — past-year gain >100% with >15 limit-up days in two years. It
+// describes what the stock is; a TODAY limit-up is what it is doing, so the
+// daily states out-rank it for the row tint.
+const CHIP_OLD_LEADER: Omit<StatusChip, "text"> = {
+  bg: "#fce7f3",
+  fg: "#be185d",
+  rowBg: "#fdf2f8",
+  priority: 3,
+};
+// 国家队 — 汇金/证金/社保/养老 among the latest top-10 holders.
+const CHIP_NATIONAL_TEAM: Omit<StatusChip, "text"> = {
+  bg: "#ccfbf1",
+  fg: "#0f766e",
+  rowBg: "#f0fdfa",
+  priority: 2,
 };
 
 /**
@@ -699,7 +731,12 @@ function isWhiteHorse(q: QuoteData | undefined): boolean {
   return cap >= 5e10 && roe >= 0.1 && pe != null && pe > 0 && pe <= 60;
 }
 
-function statusChips(t: TechnicalData, q: QuoteData | undefined): StatusChip[] {
+function statusChips(
+  ticker: string,
+  t: TechnicalData,
+  q: QuoteData | undefined,
+  nationalTeam: ReadonlySet<string>,
+): StatusChip[] {
   const chips: StatusChip[] = [];
   const chg = t.priceChange1d;
 
@@ -712,6 +749,15 @@ function statusChips(t: TechnicalData, q: QuoteData | undefined): StatusChip[] {
   if (chg != null && chg <= -LIMIT_CHANGE_THRESHOLD) {
     chips.push({ ...CHIP_LIMIT_DOWN, text: "跌停" });
   }
+  // 老龙头 screen: "过去一年里涨幅大于100%；过去两年涨停天数大于15；去除st" —
+  // the hot list has no ST stocks and no 板块 restrictions, so only the two
+  // numeric bars apply.
+  if ((t.yearGainPct ?? -Infinity) > 100 && t.limitUpDays2y > 15) {
+    chips.push({ ...CHIP_OLD_LEADER, text: "老龙头" });
+  }
+  if (nationalTeam.has(ticker)) {
+    chips.push({ ...CHIP_NATIONAL_TEAM, text: "国家队" });
+  }
   if (isWhiteHorse(q)) {
     chips.push({ ...CHIP_WHITE_HORSE, text: "白马" });
   }
@@ -721,6 +767,7 @@ function statusChips(t: TechnicalData, q: QuoteData | undefined): StatusChip[] {
 function techScreenSection(
   technicals: Record<string, TechnicalData>,
   priceData: Record<string, QuoteData>,
+  nationalTeam: ReadonlySet<string> = new Set(),
 ): string {
   const entries = Object.entries(technicals);
   if (entries.length === 0) return "";
@@ -730,7 +777,7 @@ function techScreenSection(
       const quote = priceData[ticker];
       const price = quote?.price;
       const chg = t.priceChange1d;
-      const chips = statusChips(t, quote);
+      const chips = statusChips(ticker, t, quote, nationalTeam);
       // Row tint follows the most significant chip: 连板 > 涨停 > 跌停 > 白马.
       const accent = chips.reduce<StatusChip | null>(
         (best, c) => (best == null || c.priority > best.priority ? c : best),
@@ -808,8 +855,13 @@ function techScreenSection(
     <span style="display:inline-block;background:${CHIP_LIMIT_UP.bg};color:${CHIP_LIMIT_UP.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">涨停</span>
     <span style="display:inline-block;background:${CHIP_LIMIT_DOWN.bg};color:${CHIP_LIMIT_DOWN.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">跌停</span>
     <span style="display:inline-block;background:${CHIP_DEMON.bg};color:${CHIP_DEMON.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">连板妖股</span>
+    <span style="display:inline-block;background:${CHIP_OLD_LEADER.bg};color:${CHIP_OLD_LEADER.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">老龙头</span>
+    <span style="display:inline-block;background:${CHIP_NATIONAL_TEAM.bg};color:${CHIP_NATIONAL_TEAM.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">国家队</span>
     <span style="display:inline-block;background:${CHIP_WHITE_HORSE.bg};color:${CHIP_WHITE_HORSE.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">白马</span>
     　涨跌为正红色、为负绿色（A 股习惯）。
+  </p>
+  <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">
+    老龙头：近一年涨幅&gt;100% 且两年涨停&gt;15 次 · 国家队：汇金/证金/社保/养老/国新现身前十大股东 · 白马：市值≥500亿、ROE≥10%、PE≤60
   </p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
@@ -836,13 +888,23 @@ export async function sendBrief(
   priceData: Record<string, QuoteData> = {},
   fxSkipped: Array<{ ticker: string; reason: string }> = [],
   hotNews: NewsItem[] = [],
+  nationalTeam: ReadonlySet<string> = new Set(),
 ): Promise<void> {
-  const html = buildEmailHtml(report, news, aiRecs, technicals, priceData, fxSkipped, hotNews);
+  const html = buildEmailHtml(
+    report,
+    news,
+    aiRecs,
+    technicals,
+    priceData,
+    fxSkipped,
+    hotNews,
+    nationalTeam,
+  );
 
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",
     to: recipientEmail,
-    subject: `Richfolio 每日简报 — ${new Date().toLocaleDateString("zh-CN")}`,
+    subject: `Richfolio 每日简报（${briefPeriod()}） — ${new Date().toLocaleDateString("zh-CN")}`,
     html,
   });
 

@@ -49,6 +49,8 @@ function tech(overrides: Partial<TechnicalData> = {}): TechnicalData {
     priceChange1d: null,
     consecutiveLimitUps: 0,
     recentGain5d: null,
+    yearGainPct: null,
+    limitUpDays2y: 0,
     ...overrides,
   };
 }
@@ -96,8 +98,9 @@ const hotNews: NewsItem[] = [
 function render(
   technicals: Record<string, TechnicalData>,
   priceData: Record<string, QuoteData>,
+  nationalTeam: ReadonlySet<string> = new Set(),
 ): string {
-  return buildEmailHtml(report, {}, [], technicals, priceData, [], hotNews);
+  return buildEmailHtml(report, {}, [], technicals, priceData, [], hotNews, nationalTeam);
 }
 
 describe("hot-stock technical screen", () => {
@@ -144,6 +147,47 @@ describe("hot-stock technical screen", () => {
     assert.ok(html.includes("3连板"), "streak count rendered");
     assert.ok(html.includes("#f5f3ff"), "demon-stock row tint outranks the limit-up tint");
     assert.ok(html.includes("妖股·勿追"), "demon-stock verdict");
+  });
+
+  it("tags a stock with >100% yearly gain and >15 limit-up days as 老龙头", () => {
+    const html = render(
+      {
+        "600519.SS": tech({
+          ticker: "600519.SS",
+          priceChange1d: 1,
+          yearGainPct: 130,
+          limitUpDays2y: 18,
+        }),
+      },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+    );
+    assert.ok(html.includes("#fdf2f8"), "old-leader row tint applied");
+    assert.ok(html.includes("老龙头"), "old-leader chip present");
+  });
+
+  it("does not tag 老龙头 when either criterion misses", () => {
+    const html = render(
+      {
+        "600519.SS": tech({
+          ticker: "600519.SS",
+          priceChange1d: 1,
+          yearGainPct: 130,
+          limitUpDays2y: 10, // too few limit-ups
+        }),
+      },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+    );
+    assert.ok(!html.includes("#fdf2f8"), "no old-leader tint");
+  });
+
+  it("tags stocks whose top holders include a national-team institution", () => {
+    const html = render(
+      { "600519.SS": tech({ ticker: "600519.SS", priceChange1d: 1 }) },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+      new Set(["600519.SS"]),
+    );
+    assert.ok(html.includes("#f0fdfa"), "national-team row tint applied");
+    assert.ok(html.includes("国家队"), "national-team chip present");
   });
 
   it("tags a large, profitable, sanely valued name as 白马", () => {

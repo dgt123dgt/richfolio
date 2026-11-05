@@ -17,6 +17,7 @@ import { buildAllocationReport } from "./allocation.js";
 import { fetchPrices, fetchMacroIndicators, formatMacroContext } from "./fetchPrices.js";
 import { fetchTechnicals } from "./fetchTechnicals.js";
 import { fetchNews, fetchMarketHotNews } from "./fetchNews.js";
+import { fetchNationalTeamFlags } from "./fetchHolderFlags.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -516,13 +517,19 @@ try {
     }
   } else {
     // Daily mode: full brief with news + AI + technicals
-    const [news, technicals, hotNews] = await Promise.all([
+    const [news, technicals, hotNews, nationalTeam] = await Promise.all([
       fetchNews(tickers, prices),
       fetchTechnicals(tickers, prices, fxRates),
       // Market-wide flashes for the "近 6 小时市场热点" block; failure is benign.
       fetchMarketHotNews().catch((err) => {
         console.warn(`⚠ Hot news fetch failed: ${(err as Error).message}`);
         return [];
+      }),
+      // 国家队 (汇金/证金/社保/养老) holder flags from Eastmoney F10; failure
+      // is benign — the tag simply never renders.
+      fetchNationalTeamFlags(tickers).catch((err) => {
+        console.warn(`⚠ National-team flag fetch failed: ${(err as Error).message}`);
+        return new Set<string>();
       }),
     ]);
     // Cross-pair indicators come from the crypto.com candles, not Yahoo. Required,
@@ -557,7 +564,7 @@ try {
       });
     }
 
-    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews);
+    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam);
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);
     } catch (err) {
