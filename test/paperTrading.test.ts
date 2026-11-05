@@ -67,7 +67,14 @@ function rec(ticker: string, action: string, confidence = 77): AIBuyRecommendati
   } as AIBuyRecommendation;
 }
 
-const PRICES = { "600519.SS": 19.0, "000001.SZ": 10.0, "002407.SZ": 30.0 };
+const PRICES = {
+  "600519.SS": 19.0,
+  "000001.SZ": 10.0,
+  "002407.SZ": 30.0,
+  "601857.SS": 8.0,
+  "601398.SS": 5.0,
+  "600000.SS": 8.0,
+};
 
 // ── position sizing ─────────────────────────────────────────────────
 
@@ -304,6 +311,53 @@ describe("paper trading books", () => {
     assert.ok(flat.trades.every((t: ExecutedTrade) => t.reason.includes("退潮")));
     const snap = snapshotAndSummarize(gm, { date: "2026-11-18", prices: PRICES });
     assert.equal(snap.positionPct, 0);
+  });
+
+  it("caps concurrent positions at 4 — new buys wait for a freed slot", () => {
+    const [ds] = BOOK_IDS;
+    // 高仓位口径（45%）才能在 2 万本金下塞满 4 个持仓。
+    const loaded = sentiment({ positionHint: "仓位 40%–50%：满上" } as Partial<MarketSentiment>);
+    // 12-02：三只新票 → 持仓 3。
+    executeDailyTrades(ds, {
+      date: "2026-12-02",
+      prices: PRICES,
+      aiRecs: [rec("000001.SZ", "BUY", 75), rec("601857.SS", "BUY", 70), rec("600519.SS", "BUY", 65)],
+      sentiment: loaded,
+    });
+    // 12-03：两只候选但只剩 1 个空位 → 只买置信度最高的。
+    executeDailyTrades(ds, {
+      date: "2026-12-03",
+      prices: PRICES,
+      aiRecs: [rec("601398.SS", "BUY", 90), rec("002407.SZ", "BUY", 85)],
+      sentiment: loaded,
+    });
+    assert.equal(snapshotAndSummarize(ds, { date: "2026-12-03", prices: PRICES }).holdings.length, 4, "capped at 4");
+
+    // 12-04：又有新票 BUY，但 4 个仓位都在 → 不开新仓（不卖旧仓腾位）。
+    const capped = executeDailyTrades(ds, {
+      date: "2026-12-04",
+      prices: PRICES,
+      aiRecs: [rec("600000.SS", "STRONG BUY", 92)],
+      sentiment: loaded,
+    });
+    assert.equal(capped.trades.filter((t: ExecutedTrade) => t.action === "BUY").length, 0, "no buy when full");
+    assert.equal(snapshotAndSummarize(ds, { date: "2026-12-04", prices: PRICES }).holdings.length, 4);
+
+    // 12-07：退潮清仓腾出全部位置 → 12-08 新 BUY 正常开仓。
+    executeDailyTrades(ds, {
+      date: "2026-12-07",
+      prices: PRICES,
+      aiRecs: [],
+      sentiment: sentiment({ phase: "退潮" } as Partial<MarketSentiment>),
+    });
+    const reopened = executeDailyTrades(ds, {
+      date: "2026-12-08",
+      prices: PRICES,
+      aiRecs: [rec("600000.SS", "STRONG BUY", 92)],
+      sentiment: loaded,
+    });
+    assert.equal(reopened.trades.filter((t: ExecutedTrade) => t.action === "BUY").length, 1);
+    assert.equal(snapshotAndSummarize(ds, { date: "2026-12-08", prices: PRICES }).holdings.length, 1);
   });
 });
 

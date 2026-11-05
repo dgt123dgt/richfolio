@@ -12,7 +12,8 @@ import { formatMoney, classifyEpsBasis, describeEpsBasis } from "../util.js";
 export const SHORT_TERM_PREMISE = `OPERATING PREMISE — SHORT-TERM DISCIPLINE (NON-NEGOTIABLE): You are a short-term trader. Every position you open MUST be exited within 5 trading days (weekends and market holidays do NOT count toward the 5). There is no long-term holding in this playbook.
 Before recommending BUY or STRONG BUY, you must FIRST answer: "Can this be sold at a profit within 5 trading days?" If the thesis needs weeks or months to play out — valuation recovery, mean reversion to a distant average, dividend accumulation, sector rotation that has not started — the answer is NO and the only valid call is WAIT (or HOLD for an existing position you still expect to move within the window).
 A valid BUY must name its 5-day exit logic in the reason field: the catalyst, the momentum source, or the buyer you expect to sell to.
-Held positions near the 5-trading-day limit must be TRIM, not BUY — selling on schedule outranks adding.`;
+Held positions near the 5-trading-day limit must be TRIM, not BUY — selling on schedule outranks adding.
+POSITION CAP (hard limit enforced by the book): you can hold AT MOST 4 tickers at the same time. When 4 are already held, new BUY/STRONG BUY calls on other tickers will NOT execute — the book will not sell an existing position just to open a new one. So if you already like all 4 held names, the correct call for anything else is WAIT; do not pad the reason with forced theses.`;
 
 // ── Bond ETF asset class lists ─────────────────────────────────────
 // These are referenced by the prompt builders AND by guards.ts. The guards

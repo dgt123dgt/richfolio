@@ -6,11 +6,13 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 
-process.env.PAPER_TRADING_DB_DIR = "data/.test-paper-books";
+// 独立 DB 目录：node --test 并行运行测试文件，不能与 paperTrading.test.ts
+// 共享 data/.test-paper-books。
+process.env.PAPER_TRADING_DB_DIR = "data/.test-paper-books-monthly";
 import { rmSync } from "node:fs";
 
 before(() => {
-  rmSync("data/.test-paper-books", { recursive: true, force: true });
+  rmSync("data/.test-paper-books-monthly", { recursive: true, force: true });
 });
 
 const { isLastWeekdayOfMonth } = await import("../src/monthlyReport.js");

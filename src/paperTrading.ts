@@ -45,6 +45,9 @@ function dbPathFor(book: BookId): string {
 
 export const MONTHLY_CAPITAL = Number(process.env.PAPER_MONTHLY_CAPITAL ?? 20_000);
 const MAX_BUYS_PER_DAY = 3;
+/** 最多同时持有 4 只：满了就不再开新仓（等 5 日强平/TRIM/退潮清仓腾出位置），
+ *  而不是卖旧仓换新仓——避免 AI 用卖出还有逻辑的持仓来腾挪。 */
+export const MAX_POSITIONS = 4;
 const MIN_BUDGET = 500; // below this even one 100-share lot of a ¥5 stock won't fit
 const LOT = 100; // A-share board lot
 
@@ -407,7 +410,8 @@ export function executeDailyTrades(
       .filter((r) => isAshare(r.ticker) && (r.action === "BUY" || r.action === "STRONG BUY"))
       .filter((r) => !held.has(r.ticker) && !soldToday.has(r.ticker) && price(r.ticker) != null)
       .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, MAX_BUYS_PER_DAY);
+      .slice(0, MAX_BUYS_PER_DAY)
+      .slice(0, Math.max(MAX_POSITIONS - held.size, 0)); // 持仓满了不开新仓
 
     const budget = Math.min(totalAssets() * (targetPct / 100) - marketValue(), cash());
     if (candidates.length > 0 && budget >= MIN_BUDGET) {
