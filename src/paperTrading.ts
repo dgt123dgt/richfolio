@@ -78,6 +78,7 @@ function getDb(): DatabaseSync {
       name TEXT NOT NULL,
       shares INTEGER NOT NULL,
       avg_cost REAL NOT NULL,
+      entry_date TEXT,
       updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS trades (
@@ -113,9 +114,41 @@ function getDb(): DatabaseSync {
       pnl_pct REAL
     );
   `);
+  // Migration for DBs created before the 5-trading-day rule: add entry_date
+  // and backfill it from each position's first BUY trade.
+  try {
+    db.exec("ALTER TABLE positions ADD COLUMN entry_date TEXT");
+    db.exec(`
+      UPDATE positions SET entry_date = (
+        SELECT t.trade_date FROM trades t
+        WHERE t.ticker = positions.ticker AND t.action = 'BUY'
+        ORDER BY t.id LIMIT 1
+      ) WHERE entry_date IS NULL
+    `);
+  } catch {
+    /* column already exists */
+  }
   _db = db;
   return db;
 }
+
+/**
+ * Weekdays (Mon–Fri) from `entryDate` to `date`, both inclusive. Weekends
+ * don't count toward the 5-trading-day holding cap, per the operating premise.
+ */
+export function tradingDaysBetween(entryDate: string | null, date: string): number {
+  if (!entryDate || !/^\d{4}-\d{2}-\d{2}$/.test(entryDate) || entryDate > date) return 0;
+  const start = new Date(`${entryDate}T00:00:00Z`);
+  const end = new Date(`${date}T00:00:00Z`);
+  let days = 0;
+  for (const d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const wd = d.getUTCDay();
+    if (wd !== 0 && wd !== 6) days++;
+  }
+  return days;
+}
+
+const MAX_HOLD_TRADING_DAYS = 5;
 
 /** Beijing-local YYYY-MM-DD — A-share trades are dated in market time. */
 export function beijingDate(d: Date = new Date()): string {
@@ -262,7 +295,7 @@ export function executeDailyTrades(input: {
   const cash = () => (db.prepare("SELECT cash FROM account WHERE id = 1").get() as { cash: number }).cash;
   const positions = () =>
     db.prepare("SELECT * FROM positions").all() as Array<{
-      ticker: string; name: string; shares: number; avg_cost: number;
+      ticker: string; name: string; shares: number; avg_cost: number; entry_date: string | null;
     }>;
 
   const phase = input.sentiment?.phase ?? null;
@@ -273,11 +306,33 @@ export function executeDailyTrades(input: {
     positions().reduce((sum, p) => sum + (price(p.ticker) != null ? p.shares * price(p.ticker)! : p.avg_cost * p.shares), 0);
   const totalAssets = () => cash() + marketValue();
 
-  // ── SELL side: forced flat in 退潮, TRIM halves ────────────────────
+  // Tickers sold earlier in this run may not be re-bought the same day —
+  // sell-then-rebuy would churn the book against a stale signal set.
+  const soldToday = new Set<string>();
+
+  // ── SELL side: forced flat in 退潮, stale positions past the 5-trading-day
+  //    cap, then AI TRIM halves ─────────────────────────────────────────
   if (targetPct === 0 && positions().length > 0) {
     trades.push(...closeAllPositions(db, date, input.prices, `退潮期清仓（情绪建议仓位≈0%）`));
+    for (const t of trades) soldToday.add(t.ticker);
   } else {
     for (const p of positions()) {
+      // 短线纪律：持仓超过 5 个交易日（周末不计）强制卖出，AI 说了也不算。
+      const heldDays = tradingDaysBetween(p.entry_date, date);
+      if (heldDays > MAX_HOLD_TRADING_DAYS) {
+        const px = price(p.ticker);
+        if (px != null) {
+          db.prepare("DELETE FROM positions WHERE ticker = ?").run(p.ticker);
+          const amount = p.shares * px;
+          db.prepare("UPDATE account SET cash = cash + ? WHERE id = 1").run(amount);
+          db.prepare(
+            "INSERT INTO trades (trade_date, ts, ticker, name, action, shares, price, amount, reason) VALUES (?,?,?,?,?,?,?,?,?)",
+          ).run(date, new Date().toISOString(), p.ticker, p.name, "SELL", p.shares, px, amount, `持仓满${MAX_HOLD_TRADING_DAYS}个交易日强制卖出（短线纪律）`);
+          trades.push({ action: "SELL", ticker: p.ticker, name: p.name, shares: p.shares, price: px, amount, reason: `持仓满${MAX_HOLD_TRADING_DAYS}个交易日强制卖出` });
+          soldToday.add(p.ticker);
+          continue;
+        }
+      }
       const rec = input.aiRecs.find((r) => r.ticker === p.ticker);
       if (rec?.action !== "TRIM") continue;
       const px = price(p.ticker);
@@ -301,7 +356,7 @@ export function executeDailyTrades(input: {
     const held = new Set(positions().map((p) => p.ticker));
     const candidates = input.aiRecs
       .filter((r) => isAshare(r.ticker) && (r.action === "BUY" || r.action === "STRONG BUY"))
-      .filter((r) => !held.has(r.ticker) && price(r.ticker) != null)
+      .filter((r) => !held.has(r.ticker) && !soldToday.has(r.ticker) && price(r.ticker) != null)
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, MAX_BUYS_PER_DAY);
 
@@ -314,8 +369,8 @@ export function executeDailyTrades(input: {
         if (shares < LOT) continue;
         const amount = shares * px;
         db.prepare(
-          "INSERT INTO positions (ticker, name, shares, avg_cost, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(ticker) DO UPDATE SET shares = shares + excluded.shares, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at",
-        ).run(r.ticker, displayName(r.ticker, r.tickerFullName), shares, px, new Date().toISOString());
+          "INSERT INTO positions (ticker, name, shares, avg_cost, entry_date, updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(ticker) DO UPDATE SET shares = shares + excluded.shares, avg_cost = excluded.avg_cost, updated_at = excluded.updated_at",
+        ).run(r.ticker, displayName(r.ticker, r.tickerFullName), shares, px, date, new Date().toISOString());
         db.prepare("UPDATE account SET cash = cash - ? WHERE id = 1").run(amount);
         db.prepare(
           "INSERT INTO trades (trade_date, ts, ticker, name, action, shares, price, amount, reason, confidence) VALUES (?,?,?,?,?,?,?,?,?,?)",

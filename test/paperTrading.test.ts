@@ -9,6 +9,7 @@ const {
   executeDailyTrades,
   snapshotAndSummarize,
   parseTargetPositionPct,
+  tradingDaysBetween,
   tradesForDate,
   formatTrade,
   MONTHLY_CAPITAL,
@@ -90,6 +91,16 @@ describe("parseTargetPositionPct", () => {
   });
 });
 
+describe("tradingDaysBetween", () => {
+  it("counts weekdays only — weekends never advance the 5-day clock", () => {
+    assert.equal(tradingDaysBetween("2026-11-09", "2026-11-13"), 5, "Mon→Fri = 5");
+    assert.equal(tradingDaysBetween("2026-11-09", "2026-11-16"), 6, "Fri→next Mon = 6 (weekend skipped)");
+    assert.equal(tradingDaysBetween("2026-11-06", "2026-11-09"), 2, "Fri→Mon crosses a weekend = 2");
+    assert.equal(tradingDaysBetween(null, "2026-11-09"), 0);
+    assert.equal(tradingDaysBetween("2026-11-16", "2026-11-09"), 0, "future entry counts 0");
+  });
+});
+
 // ── engine ──────────────────────────────────────────────────────────
 
 describe("paper trading engine", () => {
@@ -168,6 +179,28 @@ describe("paper trading engine", () => {
     const snap = snapshotAndSummarize({ date: "2026-12-01", prices: PRICES });
     assert.equal(snap.cash, 20000);
     assert.equal(snap.month, "2026-12");
+  });
+
+  it("enforces the 5-trading-day cap with weekends excluded", () => {
+    // Buy Monday 11-09 → held days: 9,10,11,12,13 (Fri) = 5; Monday 11-16 = 6 → force-sell.
+    executeDailyTrades({
+      date: "2026-11-09",
+      prices: PRICES,
+      aiRecs: [rec("600519.SS", "STRONG BUY", 80)],
+      sentiment: sentiment(),
+    });
+    const { trades } = executeDailyTrades({
+      date: "2026-11-16",
+      prices: PRICES,
+      aiRecs: [rec("600519.SS", "STRONG BUY", 85)], // AI 想加仓也不行
+      sentiment: sentiment(),
+    });
+    assert.ok(
+      trades.some((t: ExecutedTrade) => t.action === "SELL" && t.reason.includes("强制卖出")),
+      `stale position force-sold, got: ${JSON.stringify(trades)}`,
+    );
+    const snap = snapshotAndSummarize({ date: "2026-11-16", prices: PRICES });
+    assert.equal(snap.holdings.length, 0);
   });
 
   it("formats trades compactly", () => {

@@ -5,6 +5,15 @@ import type { TechnicalData } from "../fetchTechnicals.js";
 import { defaultCurrency, tickerNames, runtimeTickerNames } from "../config.js";
 import { formatMoney, classifyEpsBasis, describeEpsBasis } from "../util.js";
 
+// ── 操作前提：短线纪律 ──────────────────────────────────────────────
+// 用户设定的硬约束：最多持仓 5 个交易日（周末不计），到期必须卖出。
+// 作为「是否买入」的前提注入两个模型（DeepSeek / Gemini 共用本提示词模块）：
+// 任何买入判断先回答「5 个交易日内能不能卖在一个更好的价位」。
+export const SHORT_TERM_PREMISE = `OPERATING PREMISE — SHORT-TERM DISCIPLINE (NON-NEGOTIABLE): You are a short-term trader. Every position you open MUST be exited within 5 trading days (weekends and market holidays do NOT count toward the 5). There is no long-term holding in this playbook.
+Before recommending BUY or STRONG BUY, you must FIRST answer: "Can this be sold at a profit within 5 trading days?" If the thesis needs weeks or months to play out — valuation recovery, mean reversion to a distant average, dividend accumulation, sector rotation that has not started — the answer is NO and the only valid call is WAIT (or HOLD for an existing position you still expect to move within the window).
+A valid BUY must name its 5-day exit logic in the reason field: the catalyst, the momentum source, or the buyer you expect to sell to.
+Held positions near the 5-trading-day limit must be TRIM, not BUY — selling on schedule outranks adding.`;
+
 // ── Bond ETF asset class lists ─────────────────────────────────────
 // These are referenced by the prompt builders AND by guards.ts. The guards
 // module keeps its own copy to remain self-contained, but if you change
@@ -483,6 +492,7 @@ function buildPrompt(
 
   return `You are a ${watchOnly ? "market" : "portfolio"} analyst. Analyze these tickers and recommend which to buy.
 
+${SHORT_TERM_PREMISE}
 ${macroContext ? macroContext + "\n" : ""}CURRENCY: Monetary values are denominated in ${defaultCurrency} UNLESS a line states its own currency (crypto cross-pairs are quoted in another coin and are never converted — use the currency shown on the line, and never compare a cross-pair's price level against a ${defaultCurrency} one).
 
 ${
@@ -828,6 +838,7 @@ export function buildDecisionPrompt(
 
   return `You are a ${watchOnly ? "market" : "portfolio"} analyst making final buy/hold recommendations based on pre-analyzed observations.
 
+${SHORT_TERM_PREMISE}
 ${macroContext ? macroContext + "\n" : ""}CURRENCY: Monetary values are denominated in ${defaultCurrency} UNLESS a line states its own currency (crypto cross-pairs are quoted in another coin and are never converted — use the currency shown on the line, and never compare a cross-pair's price level against a ${defaultCurrency} one).
 
 ${reasoningContext ? reasoningContext + "\n\n" : ""}${
