@@ -946,7 +946,8 @@ function buildSentimentSection(s: MarketSentiment): string {
     s.tomorrowScenarios.length > 0
       ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:10px;color:${S.muted};background:#f8fafc;border:1px solid ${S.border};border-radius:6px;">
     <tr><td style="padding:6px 10px;">
-      <b style="color:#1a202c;">明日确认</b>　${s.tomorrowScenarios.map((x) => `▪ ${x}`).join("<br>")}
+      <div style="margin-bottom:3px;"><b style="color:#1a202c;">明日确认</b></div>
+      ${s.tomorrowScenarios.map((x) => `<div style="margin-top:2px;">▪ ${x}</div>`).join("")}
     </td></tr>
   </table>`
       : ""
@@ -972,9 +973,8 @@ function buildSentimentSection(s: MarketSentiment): string {
         ${
           s.funds.inflowSectors.length > 0 || s.funds.outflowSectors.length > 0
             ? `<div style="margin-top:4px;color:${S.muted};">
-                 ${s.funds.inflowSectors.length > 0 ? `流入：${s.funds.inflowSectors.map((x) => `${x.name}(+${x.net}亿)`).join("、")}` : ""}
-                 ${s.funds.inflowSectors.length > 0 && s.funds.outflowSectors.length > 0 ? "　·　" : ""}
-                 ${s.funds.outflowSectors.length > 0 ? `流出：${s.funds.outflowSectors.map((x) => `${x.name}(${x.net}亿)`).join("、")}` : ""}
+                 ${s.funds.inflowSectors.length > 0 ? `<div>流入：${s.funds.inflowSectors.map((x) => `${x.name}(+${x.net}亿)`).join("、")}</div>` : ""}
+                 ${s.funds.outflowSectors.length > 0 ? `<div style="margin-top:2px;">流出：${s.funds.outflowSectors.map((x) => `${x.name}(${x.net}亿)`).join("、")}</div>` : ""}
                </div>`
             : ""
         }
