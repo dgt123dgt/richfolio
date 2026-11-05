@@ -35,13 +35,29 @@ describe("computeLongTermLabels", () => {
     assert.ok(labels.includes("白马"));
   });
 
-  it("labels a fast-growing company 成长", () => {
+  it("labels a fast-growing company 成长 — revenue AND earnings must confirm", () => {
     const labels = computeLongTermLabels(
-      quote({ marketCap: 2e10, trailingPE: 80, revenueGrowth: 0.45 }),
+      quote({ marketCap: 2e10, trailingPE: 80, revenueGrowth: 0.45, earningsGrowth: 0.35 }),
       undefined,
     );
     assert.ok(labels.includes("成长"));
     assert.ok(!labels.includes("白马"), "small cap with rich PE is not a 白马");
+  });
+
+  it("does NOT label 成长 on a revenue spike with weak earnings", () => {
+    const labels = computeLongTermLabels(
+      quote({ revenueGrowth: 0.45, earningsGrowth: 0.05 }),
+      undefined,
+    );
+    assert.ok(!labels.includes("成长"), "quarterly boom ≠ durable growth");
+  });
+
+  it("does NOT label 成长 when growth data is missing", () => {
+    const labels = computeLongTermLabels(
+      quote({ revenueGrowth: null, earningsGrowth: null }),
+      undefined,
+    );
+    assert.ok(!labels.includes("成长"));
   });
 
   it("labels cheap high-dividend stocks 价值", () => {

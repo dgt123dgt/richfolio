@@ -83,11 +83,14 @@ export function computeLongTermLabels(
   if (name.includes("ST") || (pe != null && pe <= 0)) labels.push("绩差");
   // 白马 — same bar as the email heuristic: big, profitable, sanely valued.
   if (cap >= 5e10 && roe >= 0.1 && pe != null && pe > 0 && pe <= 60) labels.push("白马");
-  // 成长 — visibly expanding top and bottom line.
-  if (
-    (quote.revenueGrowth ?? 0) >= 0.2 ||
-    ((quote.revenueGrowth ?? 0) >= 0.1 && (quote.earningsGrowth ?? 0) >= 0.3)
-  ) {
+  // 成长 — sustained expansion on BOTH top and bottom line. Yahoo's numbers
+  // are quarterly YoY, which spikes across a whole sector during a boom
+  // (PCB/AI in particular), so a revenue-only bar stamped 成长 on half the
+  // watch list. Requiring earnings to confirm keeps one hot quarter from
+  // earning a "long-term" label; missing either side → no label.
+  const revG = quote.revenueGrowth;
+  const earG = quote.earningsGrowth;
+  if (revG != null && earG != null && revG >= 0.15 && earG >= 0.2) {
     labels.push("成长");
   }
   // 价值 — cheap for what it pays you back in dividends.
