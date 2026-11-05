@@ -8,6 +8,8 @@ import {
   classifyVolumeState,
   buildFundComment,
   describeBuyers,
+  buildTomorrowScenarios,
+  describeLadder,
   type SentimentMetrics,
 } from "../src/marketSentiment.js";
 
@@ -176,6 +178,58 @@ describe("buildFundComment", () => {
     assert.ok(buildFundComment("缩量", -120).includes("冰点"));
     assert.ok(buildFundComment("平量", 30).includes("温和"));
     assert.ok(buildFundComment("平量", -30).includes("观望"));
+  });
+});
+
+describe("buildTomorrowScenarios", () => {
+  it("gives a 分歧 day explicit confirm / degrade / hold branches", () => {
+    const s = buildTomorrowScenarios("分歧");
+    assert.equal(s.length, 3);
+    assert.ok(s[0].includes("确认主升"));
+    assert.ok(s[0].includes("≥60"), "quantified bar");
+    assert.ok(s[1].includes("退潮"));
+    assert.ok(s[2].includes("混沌"));
+  });
+
+  it("every phase produces three scenario branches", () => {
+    for (const p of ["主升", "混沌", "退潮"] as const) {
+      assert.equal(buildTomorrowScenarios(p).length, 3, p);
+    }
+  });
+});
+
+describe("describeLadder", () => {
+  const pool = [
+    { c: "1", m: 0, n: "闽发铝业", lbc: 4, zdp: 10, hybk: "光伏设备", zbc: 0, zttj: { days: 4, ct: 4 } },
+    { c: "2", m: 0, n: "浙文影业", lbc: 4, zdp: 10, hybk: "传媒", zbc: 0, zttj: { days: 4, ct: 4 } },
+    { c: "3", m: 0, n: "永臻股份", lbc: 3, zdp: 10, hybk: "光伏设备", zbc: 0, zttj: { days: 3, ct: 3 } },
+    { c: "4", m: 0, n: "东方海洋", lbc: 1, zdp: 10, hybk: "渔业", zbc: 0, zttj: { days: 12, ct: 7 } },
+    { c: "5", m: 0, n: "某首板", lbc: 1, zdp: 10, hybk: "银行", zbc: 0 },
+  ];
+
+  it("summarises the ladder distribution compactly", () => {
+    const r = describeLadder(pool);
+    assert.ok(r.ladderText.includes("4板×2"));
+    assert.ok(r.ladderText.includes("首板2"));
+  });
+
+  it("names the space leaders with board and theme", () => {
+    const r = describeLadder(pool);
+    assert.ok(r.spaceText?.includes("闽发铝业（4板·光伏设备）"));
+    assert.ok(r.spaceText?.includes("浙文影业"));
+  });
+
+  it("lists trend stars (days > ct, 断板趋势龙) separately", () => {
+    const r = describeLadder(pool);
+    assert.ok(r.spaceText?.includes("东方海洋 12天7板"), r.spaceText ?? "");
+    // A plain 连板 (days == ct) is not a 趋势高标.
+    assert.ok(!r.spaceText?.includes("闽发铝业 4天4板"));
+  });
+
+  it("returns nulls for an empty pool", () => {
+    const r = describeLadder([]);
+    assert.equal(r.ladderText, "");
+    assert.equal(r.spaceText, null);
   });
 });
 

@@ -45,6 +45,8 @@ export interface PoolStock {
   zdp: number;
   hybk: string;
   zbc: number;
+  /** 涨停统计 {days, ct} — days>ct 表示断过板的趋势高标 (如 12天7板). */
+  zttj?: { days: number; ct: number };
 }
 
 export interface SentimentMetrics {
@@ -137,6 +139,12 @@ export interface MarketSentiment {
   funds?: FundFlow;
   /** 主线龙头盯防：断板/大面/停牌(核查)预警；正常时也点名龙头. */
   leaderAlert: string | null;
+  /** 连板梯队分布一句话，如 "4板×2 · 3板×2 · 2板×17 · 首板63". */
+  ladderText: string;
+  /** 空间板名单 + 趋势人气高标 (断板趋势龙)，如 "闽发铝业(4板·光伏)". */
+  spaceText: string | null;
+  /** 明日三分支确认条件（确认/退化/维持），按当前阶段生成. */
+  tomorrowScenarios: string[];
 }
 
 // ── Pure classification (exported for tests) ────────────────────────
@@ -405,6 +413,69 @@ export function buildFundComment(
   return mainNet > 0
     ? "量能平稳、主力净流入：情绪温和延续，跟随主线即可"
     : "量能平稳、主力净流出：观望情绪升温，等待方向选择";
+}
+
+/**
+ * 明日三分支确认条件 — 按当前阶段列出「确认升级 / 退化降级 / 原地维持」各自
+ * 的量化门槛，让分歧日有明确的分水岭可跟踪，而不是只给一个静态标签.
+ */
+export function buildTomorrowScenarios(phase: MarketPhase): string[] {
+  switch (phase) {
+    case "主升":
+      return [
+        "确认延续：涨停维持 ≥60，晋级率 ≥50%，炸板率 <30% 同时成立",
+        "转分歧：涨停回落至 30–60 或炸板率抬升至 35–45%",
+        "转退潮：涨停跌破 30、晋级率 <35% 或出现批量 -8% 大面",
+      ];
+    case "分歧":
+      return [
+        "确认主升：涨停回升 ≥60，晋级率站上 50%，炸板率回落 <30%，最高板继续打开高度",
+        "重回退潮：涨停继续下滑 <30，或高位批量断板、出现批量 -8% 大面",
+        "维持混沌：涨停 30–60 徘徊，炸板率维持 35–45% 高位，题材继续轮动",
+      ];
+    case "混沌":
+      return [
+        "转主升：一条主线连续两天保持梯队（涨停 ≥60、晋级率 ≥50%）",
+        "维持混沌：题材每日轮换、梯队断层，无板块连续两天走强",
+        "转退潮：涨停跌破 30 且昨日涨停红盘率 <50%",
+      ];
+    case "退潮":
+      return [
+        "修复转分歧：涨停回升 ≥30，大面停止扩散，炸板率回落",
+        "继续退潮：涨停继续萎缩，晋级率 <35%，大面 >20 持续抬升",
+        "冰点反转：恐慌宣泄殆尽后出现批量首板 + 红盘率显著回升",
+      ];
+  }
+}
+
+/** 连板梯队分布 + 空间板 + 趋势人气高标 (纯函数, 测试用). */
+export function describeLadder(pool: PoolStock[]): {
+  ladderText: string;
+  spaceText: string | null;
+} {
+  if (pool.length === 0) return { ladderText: "", spaceText: null };
+  const dist = new Map<number, number>();
+  for (const s of pool) dist.set(s.lbc, (dist.get(s.lbc) ?? 0) + 1);
+  const maxLbc = Math.max(...dist.keys());
+  const ladder = [...dist.keys()]
+    .sort((a, b) => b - a)
+    .map((l) => (l === 1 ? `首板${dist.get(l)}` : `${l}板×${dist.get(l)}`))
+    .join(" · ");
+
+  const space = pool
+    .filter((s) => s.lbc === maxLbc)
+    .slice(0, 3)
+    .map((s) => `${s.n}（${s.lbc}板${s.hybk ? `·${s.hybk}` : ""}）`)
+    .join("、");
+
+  const stars = pool
+    .filter((s) => s.zttj && s.zttj.ct >= 3 && s.zttj.days > s.zttj.ct)
+    .sort((a, b) => (b.zttj!.ct ?? 0) - (a.zttj!.ct ?? 0))
+    .slice(0, 2)
+    .map((s) => `${s.n} ${s.zttj!.days}天${s.zttj!.ct}板`);
+
+  const spaceText = stars.length > 0 ? `${space}；趋势高标：${stars.join("、")}` : space;
+  return { ladderText: ladder, spaceText: spaceText || null };
 }
 
 // ── 资金面 fetching ─────────────────────────────────────────────────
@@ -708,7 +779,7 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
     .sort((a, b) => b[1].length - a[1].length)[0]?.[0];
   const todayTop = top3[0]?.name;
   if (todayTop && yTop && todayTop !== yTop && top3[0].ztCount >= 8 && top3[0].maxLbc >= 3) {
-    relayHint = `注意接力信号：${todayTop} 正在卡位旧主线 ${yTop}（昨日涨停${yGroups.get(yTop)?.length ?? 0}家 → 今日转弱）`;
+    relayHint = `注意接力信号：${todayTop} 正在卡位旧主线 ${yTop}（昨日涨停${yGroups.get(yTop)?.length ?? 0}家 → 今日转弱）——明日确认：${todayTop} 涨停维持 ≥${top3[0].ztCount} 家且龙头不断板；若资金回流 ${yTop} 则卡位失败，重回轮动`;
   } else if (todayTop && yTop && todayTop === yTop) {
     relayHint = `主线延续：${todayTop}（昨日涨停${yGroups.get(yTop)?.length ?? 0}家 → 今日${top3[0].ztCount}家）`;
   }
@@ -762,19 +833,36 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
     );
   }
 
+  // 梯队结构 + 空间板 + 趋势人气高标.
+  const { ladderText, spaceText } = describeLadder(today.pool);
+
   // 资金面 — failure degrades to a missing funds row, never kills the section.
   const funds = await fetchFundFlow().catch(() => null);
+
+  // 分歧日的仓位口径看亏钱效应是否扩散：大面少 + 主力资金未撤退 →
+  // 压到 20–30% 只做辨识度龙头；否则维持保守默认。
+  let positionHint = POSITION_HINTS[cls.phase];
+  if (
+    cls.phase === "分歧" &&
+    metrics.bigLossCount <= 5 &&
+    (funds?.mainNet ?? 0) > 0
+  ) {
+    positionHint = "仓位 20%–30%：只做辨识度龙头，不批量扫低位首板";
+  }
 
   return {
     date: today.date,
     metrics,
     phase: cls.phase,
     matches: cls.matches,
-    positionHint: POSITION_HINTS[cls.phase],
+    positionHint,
     detail: cls.detail,
     concepts: top3,
     relayHint,
     leaderAlert,
+    ladderText,
+    spaceText,
+    tomorrowScenarios: buildTomorrowScenarios(cls.phase),
     ...(funds ? { funds } : {}),
   };
 }

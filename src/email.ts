@@ -937,6 +937,20 @@ function buildSentimentSection(s: MarketSentiment): string {
       ? `<p style="margin:4px 0 0;font-size:11px;color:${s.leaderAlert.startsWith("⚠") ? "#b91c1c" : "#1a202c"};">${s.leaderAlert}</p>`
       : ""
   }
+  ${
+    s.ladderText
+      ? `<p style="margin:4px 0 0;font-size:11px;color:${S.muted};">梯队：${s.ladderText}${s.spaceText ? `　·　空间板：${s.spaceText}` : ""}</p>`
+      : ""
+  }
+  ${
+    s.tomorrowScenarios.length > 0
+      ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:10px;color:${S.muted};background:#f8fafc;border:1px solid ${S.border};border-radius:6px;">
+    <tr><td style="padding:6px 10px;">
+      <b style="color:#1a202c;">明日确认</b>　${s.tomorrowScenarios.map((x) => `▪ ${x}`).join("<br>")}
+    </td></tr>
+  </table>`
+      : ""
+  }
   <p style="margin:6px 0 0;font-size:11px;color:${S.muted};">
     涨停 <b style="color:#1a202c;">${m.ztCount}</b> 家 · 最高 <b style="color:#1a202c;">${m.maxLbc}</b> 板 ·
     晋级率 <b style="color:#1a202c;">${pct(m.promoteRate)}</b> · 炸板率 <b style="color:#1a202c;">${pct(zbRate)}</b> ·
