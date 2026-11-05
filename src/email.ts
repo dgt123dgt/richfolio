@@ -302,17 +302,15 @@ function buildAISection(
     ? `由 ${providerLabels.join(" + ")} 联合分析 — 分数取各 AI 均值，每只标的下方附各 AI 明细。`
     : `由 ${providerLabels[0]} 分析 — 综合基本面、估值、配置缺口、技术面与新闻情绪。`;
 
-  return `
-<tr><td style="padding:20px 24px 8px;background:${S.cardBg};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">AI 买入建议</h2>
-  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">${subtitle}</p>
-</td></tr>
-<tr><td style="padding:0 24px 16px;background:${S.cardBg};">
-  ${
-    actionable.length > 0
-      ? actionable
-          .map(
-            (rec) => `
+  // Watch-only mode: every rec belongs to the watch list, so burying STRONG
+  // BUY calls under an "观察名单" divider while the top says "暂无买入" reads
+  // as a contradiction. There, the watch actionable cards ARE the main list;
+  // the boxed 观察名单 block only renders when a real portfolio exists above.
+  const hasPortfolioRecs = portfolioRecs.length > 0;
+  const topActionable = hasPortfolioRecs ? actionable : watchActionable;
+  const topOthers = hasPortfolioRecs ? others : watchOthers;
+
+  const actionableCard = (rec: AIBuyRecommendation): string => `
   <div style="padding:10px 0;border-bottom:1px solid ${S.border};">
     <div style="margin-bottom:4px;">
       <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
@@ -332,76 +330,69 @@ function buildAISection(
     </div>`
         : ""
     }
-  </div>`,
-          )
-          .join("")
-      : `<p style="color:${S.muted};font-size:13px;">今日暂无符合买入条件的标的。</p>`
-  }
-  ${
-    others.length > 0
-      ? `
-  <div style="margin-top:12px;">
-    <div style="font-size:11px;color:${S.muted};text-transform:uppercase;margin-bottom:6px;">持有 / 观望</div>
-    ${others
-      .map(
-        (rec) => `
+  </div>`;
+
+  const otherRow = (rec: AIBuyRecommendation): string => `
     <div style="padding:4px 0;font-size:12px;">
       <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
       &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
       <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
-    </div>`,
-      )
-      .join("")}
+    </div>`;
+
+  const emptyBox = `
+  <div style="background:#f8fafc;border:1px dashed ${S.border};border-radius:8px;padding:16px 12px;text-align:center;">
+    <div style="font-size:13px;font-weight:bold;color:${S.muted};">今日暂无符合买入条件的标的</div>
+    <div style="font-size:11px;color:${S.muted};margin-top:4px;">全部标的均未达到「买入 / 强烈买入」标准 — 详见下方持有/观望与快筛表。</div>
+  </div>`;
+
+  return `
+<tr><td style="padding:20px 24px 8px;background:${S.cardBg};">
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">AI 买入建议</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">${subtitle}</p>
+  <div style="margin-top:8px;background:#f8fafc;border-left:3px solid ${S.blue};border-radius:0 6px 6px 0;padding:8px 12px;font-size:11px;color:${S.muted};line-height:1.6;">
+    <b style="color:${S.blue};">入选逻辑：</b>AI 综合估值（市盈率、52 周位置、分析师目标价）、技术面（RSI、MACD、50/200 日均线）、消息面（近 24 小时新闻情绪）${
+      hasPortfolioRecs ? "与配置缺口" : ""
+    }打分，结论为「买入 / 强烈买入」的标的才进入本栏；未达标的显示在「持有 / 观望」中。
+  </div>
+  ${
+    !hasPortfolioRecs && watching.length > 0
+      ? `<p style="margin:8px 0 0;font-size:11px;color:${S.amber};">当前为观察模式 — 以下标的均来自观察名单，只给信号、不分配买入金额。</p>`
+      : ""
+  }
+</td></tr>
+<tr><td style="padding:0 24px 16px;background:${S.cardBg};">
+  ${
+    topActionable.length > 0
+      ? topActionable.map(actionableCard).join("")
+      : emptyBox
+  }
+  ${
+    topOthers.length > 0
+      ? `
+  <div style="margin-top:14px;">
+    <div style="font-size:11px;color:${S.muted};text-transform:uppercase;margin-bottom:6px;">持有 / 观望</div>
+    ${topOthers.map(otherRow).join("")}
   </div>`
       : ""
   }
   ${
-    watching.length > 0
+    hasPortfolioRecs && watching.length > 0
       ? `
-  <div style="margin-top:18px;padding-top:14px;border-top:2px dashed ${S.border};">
-    <div style="font-size:13px;color:${S.yellow};font-weight:bold;margin-bottom:2px;">观察名单</div>
-    <div style="font-size:11px;color:${S.muted};margin-bottom:10px;">跟踪中但不在目标组合内 — 仅提示信号，不建议买入金额。</div>
+  <div style="margin-top:20px;border:1px solid #fde68a;border-radius:8px;overflow:hidden;">
+    <div style="background:#fef3c7;padding:10px 14px;">
+      <span style="font-size:13px;font-weight:bold;color:${S.amber};">👁 观察名单</span>
+      <span style="font-size:11px;color:#92400e;margin-left:8px;">跟踪中但不在目标组合内 — 仅提示信号，不建议买入金额。</span>
+    </div>
+    <div style="padding:6px 14px 10px;">
     ${watchActionable
-      .map(
-        (rec) => `
-    <div style="padding:10px 0;border-bottom:1px solid ${S.border};">
-      <div style="margin-bottom:4px;">
-        <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
-      <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-        &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
-        &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}${priceTag(rec.ticker)}
-      </div>
-      <div style="font-size:12px;color:${S.text};margin-top:4px;">${rec.reason}</div>
-      ${buildProvidersBreakdown(rec)}
-      ${buildTechnicalInsight(rec, technicals[rec.ticker])}
-      ${
-        hasStrongBuyVote(rec) && rec.analysisUrl
-          ? `
-      <div style="margin-top:8px;">
-        <a href="${rec.analysisUrl}" style="display:inline-block;background:${S.blue}22;color:${S.blue};padding:4px 12px;border-radius:4px;font-size:11px;font-weight:bold;text-decoration:none;border:1px solid ${S.blue}44;">查看详情 &rarr;</a>
-      </div>`
-          : ""
-      }
-    </div>`,
-      )
+      .map(actionableCard)
       .join("")}
     ${
       watchOthers.length > 0
-        ? `
-    <div style="margin-top:8px;">
-      ${watchOthers
-        .map(
-          (rec) => `
-      <div style="padding:4px 0;font-size:12px;">
-        <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-        &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
-        <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
-      </div>`,
-        )
-        .join("")}
-    </div>`
+        ? `<div style="margin-top:8px;">${watchOthers.map(otherRow).join("")}</div>`
         : ""
     }
+    </div>
   </div>`
       : ""
   }
