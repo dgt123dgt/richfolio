@@ -85,6 +85,30 @@ export interface ConceptScore {
   phase: MarketPhase | "过渡";
 }
 
+// ── 资金面 ──────────────────────────────────────────────────────────
+
+export interface SectorFlow {
+  name: string;
+  /** 主力净流入 in 亿元 (negative = outflow). */
+  net: number;
+}
+
+export interface FundFlow {
+  /** 两市成交额 (亿元). */
+  totalAmount: number;
+  /** 较昨日 % (正=放量). */
+  amountChangePct: number;
+  /** 较 5 日均量 % . */
+  amountVs5dAvgPct: number;
+  volumeState: "放量" | "缩量" | "平量";
+  /** 两市主力净流入 (亿元), today. */
+  mainNet: number;
+  inflowSectors: SectorFlow[];
+  outflowSectors: SectorFlow[];
+  /** 一句话影响判断. */
+  comment: string;
+}
+
 export interface MarketSentiment {
   /** 数据日期 YYYYMMDD. */
   date: string;
@@ -99,6 +123,8 @@ export interface MarketSentiment {
   concepts: ConceptScore[];
   /** 题材接力/延续提示. */
   relayHint: string | null;
+  /** 资金面 (成交额放量/缩量 + 板块主力净流入/流出)；抓取失败时缺省. */
+  funds?: FundFlow;
 }
 
 // ── Pure classification (exported for tests) ────────────────────────
@@ -334,6 +360,140 @@ function groupByConcept(
   return groups;
 }
 
+// ── 资金面 helpers (pure, tested) ───────────────────────────────────
+
+/**
+ * 放量/缩量判定：单日环比 ±8% 且 5 日均量同向，或相对 5 日均量 ±20%。
+ * 单日反弹但整体仍低于 5 日均量时不算放量（昨日地量后的正常回升归为缩量）。
+ */
+export function classifyVolumeState(
+  changePct: number,
+  vs5dPct: number,
+): FundFlow["volumeState"] {
+  if (changePct >= 8 && vs5dPct >= 0) return "放量";
+  if (changePct <= -8 && vs5dPct <= 0) return "缩量";
+  if (vs5dPct >= 20) return "放量";
+  if (vs5dPct <= -20) return "缩量";
+  return "平量";
+}
+
+/** 资金面 × 情绪影响一句话判断. */
+export function buildFundComment(
+  state: FundFlow["volumeState"],
+  mainNet: number,
+): string {
+  if (state === "放量" && mainNet > 0)
+    return "放量且主力净流入：增量资金助推，赚钱效应有扩散基础，情绪看高一线";
+  if (state === "放量" && mainNet < 0)
+    return "放量但主力净流出：分歧加大，高位兑现盘沉重，警惕冲高回落";
+  if (state === "缩量" && mainNet > 0)
+    return "缩量但主力净流入：存量资金回流修复，持续性待次日确认";
+  if (state === "缩量" && mainNet < 0)
+    return "缩量且主力净流出：承接乏力，情绪冰点或继续降温，防守为主";
+  return mainNet > 0
+    ? "量能平稳、主力净流入：情绪温和延续，跟随主线即可"
+    : "量能平稳、主力净流出：观望情绪升温，等待方向选择";
+}
+
+// ── 资金面 fetching ─────────────────────────────────────────────────
+
+const KLINE_URL = (secid: string) =>
+  `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f7&fields2=f51,f57&klt=101&fqt=1&end=20500101&lmt=6`;
+const FFLOW_URL = (secid: string) =>
+  `https://push2.eastmoney.com/api/qt/stock/fflow/kline/get?lmt=2&klt=101&secid=${secid}&fields1=f1,f2,f3,f7&fields2=f51,f52`;
+const SECTOR_FLOW_URL = (po: 0 | 1) =>
+  `https://push2.eastmoney.com/api/qt/clist/get?fid=f62&po=${po}&pz=8&pn=1&np=1&fltt=2&invt=2&fs=m:90+t:2+f:!50&fields=f14,f62`;
+
+/** 偶发 IPv6 连接超时 — 同一请求重试几次，仍失败则放弃（栏目降级）. */
+async function fetchRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T | null> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch {
+      /* retry */
+    }
+  }
+  return null;
+}
+
+async function fetchDailyAmounts(secid: string): Promise<number[]> {
+  return (
+    (await fetchRetry(async () => {
+      const res = await fetch(KLINE_URL(secid), { headers: HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { data?: { klines?: string[] } };
+      const rows = json.data?.klines ?? [];
+      return rows.map((r) => Number(r.split(",")[1]));
+    })) ?? []
+  );
+}
+
+async function fetchMainFlow(secid: string): Promise<number | null> {
+  return fetchRetry(async () => {
+    const res = await fetch(FFLOW_URL(secid), { headers: HEADERS });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = (await res.json()) as { data?: { klines?: string[] } };
+    const rows = json.data?.klines ?? [];
+    if (rows.length === 0) return null;
+    // Last bar = today; f52 is 主力净流入 in 元.
+    return Number(rows[rows.length - 1].split(",")[1]) / 1e8;
+  });
+}
+
+async function fetchSectorFlows(po: 0 | 1): Promise<SectorFlow[]> {
+  return (
+    (await fetchRetry(async () => {
+      const res = await fetch(SECTOR_FLOW_URL(po), { headers: HEADERS });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as {
+        data?: { diff?: Array<{ f14: string; f62: number }> };
+      };
+      return (json.data?.diff ?? []).map((d) => ({
+        name: d.f14,
+        net: Math.round((d.f62 / 1e8) * 10) / 10,
+      }));
+    })) ?? []
+  );
+}
+
+const YI = 1e8; // 元 → 亿元
+
+/** 汇总两市成交/主力资金/行业板块流入流出；任一关键数据缺失返回 null. */
+export async function fetchFundFlow(): Promise<FundFlow | null> {
+  const [shAmt, szAmt, shNet, szNet, inflow, outflow] = await Promise.all([
+    fetchDailyAmounts("1.000001"),
+    fetchDailyAmounts("0.399001"),
+    fetchMainFlow("1.000001"),
+    fetchMainFlow("0.399001"),
+    fetchSectorFlows(1),
+    fetchSectorFlows(0),
+  ]);
+  if (shAmt.length < 2 || szAmt.length < 2) return null;
+
+  const dailyTotals = shAmt.map((a, i) => a + (szAmt[i] ?? 0));
+  const today = dailyTotals[dailyTotals.length - 1] / YI;
+  const prev = dailyTotals[dailyTotals.length - 2] / YI;
+  const base5 =
+    dailyTotals.slice(-6, -1).reduce((a, b) => a + b, 0) /
+    Math.max(dailyTotals.slice(-6, -1).length, 1) / YI;
+  const amountChangePct = prev > 0 ? Math.round(((today - prev) / prev) * 1000) / 10 : 0;
+  const amountVs5dAvgPct =
+    base5 > 0 ? Math.round(((today - base5) / base5) * 1000) / 10 : 0;
+  const mainNet = (shNet ?? 0) + (szNet ?? 0);
+  const volumeState = classifyVolumeState(amountChangePct, amountVs5dAvgPct);
+
+  return {
+    totalAmount: Math.round(today * 10) / 10,
+    amountChangePct,
+    amountVs5dAvgPct,
+    volumeState,
+    mainNet: Math.round(mainNet * 10) / 10,
+    inflowSectors: inflow.slice(0, 3),
+    outflowSectors: outflow.slice(0, 3),
+    comment: buildFundComment(volumeState, mainNet),
+  };
+}
+
 // ── Orchestration ───────────────────────────────────────────────────
 
 /**
@@ -440,6 +600,9 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
     relayHint = `主线延续：${todayTop}（昨日涨停${yGroups.get(yTop)?.length ?? 0}家 → 今日${top3[0].ztCount}家）`;
   }
 
+  // 资金面 — failure degrades to a missing funds row, never kills the section.
+  const funds = await fetchFundFlow().catch(() => null);
+
   return {
     date: today.date,
     metrics,
@@ -449,5 +612,6 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
     detail: cls.detail,
     concepts: top3,
     relayHint,
+    ...(funds ? { funds } : {}),
   };
 }

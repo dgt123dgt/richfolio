@@ -926,6 +926,32 @@ function buildSentimentSection(s: MarketSentiment): string {
     <span style="color:${S.muted};">（昨涨停 ${m.yesterdayZtCount} 家，平均溢价 ${m.avgPremium >= 0 ? "+" : ""}${m.avgPremium.toFixed(1)}%）</span>
   </p>
   ${s.detail.length > 0 && s.phase !== "分歧" ? `<p style="margin:4px 0 0;font-size:10px;color:${S.muted};">命中项：${s.detail.join(" · ")}</p>` : ""}
+  ${
+    s.funds
+      ? `
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;font-size:11px;background:#f8fafc;border:1px solid ${S.border};border-radius:6px;">
+    <tr>
+      <td style="padding:8px 10px;color:#1a202c;">
+        <b>资金面</b>　两市成交 <b>${s.funds.totalAmount}</b> 亿，较昨日
+        <span style="color:${s.funds.amountChangePct >= 0 ? "#b91c1c" : "#15803d"};font-weight:bold;">${s.funds.amountChangePct >= 0 ? "+" : ""}${s.funds.amountChangePct}%</span>、
+        较 5 日均量 <span style="color:${s.funds.amountVs5dAvgPct >= 0 ? "#b91c1c" : "#15803d"};font-weight:bold;">${s.funds.amountVs5dAvgPct >= 0 ? "+" : ""}${s.funds.amountVs5dAvgPct}%</span>
+        → <b>${s.funds.volumeState}</b> ｜ 主力净
+        <span style="color:${s.funds.mainNet >= 0 ? "#b91c1c" : "#15803d"};font-weight:bold;">${s.funds.mainNet >= 0 ? "流入 +" : "流出 "}${Math.abs(s.funds.mainNet)} 亿</span>
+        ${
+          s.funds.inflowSectors.length > 0 || s.funds.outflowSectors.length > 0
+            ? `<div style="margin-top:4px;color:${S.muted};">
+                 ${s.funds.inflowSectors.length > 0 ? `流入：${s.funds.inflowSectors.map((x) => `${x.name}(+${x.net}亿)`).join("、")}` : ""}
+                 ${s.funds.inflowSectors.length > 0 && s.funds.outflowSectors.length > 0 ? "　·　" : ""}
+                 ${s.funds.outflowSectors.length > 0 ? `流出：${s.funds.outflowSectors.map((x) => `${x.name}(${x.net}亿)`).join("、")}` : ""}
+               </div>`
+            : ""
+        }
+        <div style="margin-top:4px;color:${S.muted};">影响：${s.funds.comment}</div>
+      </td>
+    </tr>
+  </table>`
+      : ""
+  }
 </td></tr>
 ${
   s.concepts.length > 0

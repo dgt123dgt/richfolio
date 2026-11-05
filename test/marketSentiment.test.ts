@@ -5,6 +5,8 @@ import {
   classifyConceptPhase,
   scoreConcept,
   phaseMatches,
+  classifyVolumeState,
+  buildFundComment,
   type SentimentMetrics,
 } from "../src/marketSentiment.js";
 
@@ -141,5 +143,37 @@ describe("phaseMatches detail labels", () => {
     const m = metrics({ ztCount: 85 });
     const r = phaseMatches("主升", m);
     assert.ok(r.detail.some((d) => d.includes("涨停85家")));
+  });
+});
+
+describe("classifyVolumeState", () => {
+  it("calls 放量 on a ≥8% daily surge with non-negative 5d base", () => {
+    assert.equal(classifyVolumeState(12, 5), "放量");
+    assert.equal(classifyVolumeState(10, 30), "放量");
+  });
+
+  it("calls 缩量 on a ≥8% drop or a deep 5d-avg contraction", () => {
+    assert.equal(classifyVolumeState(-15, -5), "缩量");
+    assert.equal(classifyVolumeState(-3, -25), "缩量");
+  });
+
+  it("keeps a dead-volume bounce out of 放量", () => {
+    // +9% day-over-day but still 25% under the 5-day average → still dry.
+    assert.equal(classifyVolumeState(9, -25), "缩量");
+  });
+
+  it("treats small moves as 平量", () => {
+    assert.equal(classifyVolumeState(3, 8), "平量");
+  });
+});
+
+describe("buildFundComment", () => {
+  it("pairs volume state and main-force direction into distinct verdicts", () => {
+    assert.ok(buildFundComment("放量", 120).includes("增量资金"));
+    assert.ok(buildFundComment("放量", -120).includes("分歧"));
+    assert.ok(buildFundComment("缩量", 120).includes("存量"));
+    assert.ok(buildFundComment("缩量", -120).includes("冰点"));
+    assert.ok(buildFundComment("平量", 30).includes("温和"));
+    assert.ok(buildFundComment("平量", -30).includes("观望"));
   });
 });
