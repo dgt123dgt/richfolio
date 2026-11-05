@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildEmailHtml } from "../src/email.js";
 import type { AllocationReport } from "../src/allocation.js";
 import type { AIBuyRecommendation } from "../src/providers/types.js";
+import type { BoardInfo } from "../src/fetchBoards.js";
 import type { TechnicalData } from "../src/technicals.js";
 import type { QuoteData } from "../src/fetchPrices.js";
 import type { NewsItem } from "../src/fetchNews.js";
@@ -100,8 +101,9 @@ function render(
   technicals: Record<string, TechnicalData>,
   priceData: Record<string, QuoteData>,
   nationalTeam: ReadonlySet<string> = new Set(),
+  boards: Record<string, BoardInfo> = {},
 ): string {
-  return buildEmailHtml(report, {}, [], technicals, priceData, [], hotNews, nationalTeam);
+  return buildEmailHtml(report, {}, [], technicals, priceData, [], hotNews, nationalTeam, boards);
 }
 
 describe("hot-stock technical screen", () => {
@@ -216,6 +218,63 @@ describe("hot-stock technical screen", () => {
     assert.ok(!html.includes("#f5f3ff"), "no demon tint");
     assert.ok(!html.includes("#fffbeb"), "no white-horse tint");
     assert.ok(html.includes("可关注"));
+  });
+
+  it("upgrades to 密切关注 when two bullish signals line up", () => {
+    const html = render(
+      {
+        "600519.SS": tech({
+          ticker: "600519.SS",
+          goldenCross: true,
+          rsi14: 28, // oversold bounce + golden cross = 2 bullish signals
+        }),
+      },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+    );
+    assert.ok(html.includes("密切关注"), "tiered verdict present");
+    assert.ok(html.includes("#dcfce7"), "green pill applied");
+  });
+
+  it("downgrades to 无需关注 when bearish signals stack up", () => {
+    const html = render(
+      {
+        "600519.SS": tech({
+          ticker: "600519.SS",
+          goldenCross: false,
+          deathCross: true,
+          macdCrossover: "bearish",
+        }),
+      },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+    );
+    assert.ok(html.includes("无需关注"), "neutral verdict present");
+    assert.ok(html.includes("#f1f5f9"), "grey pill applied");
+  });
+
+  it("renders an industry / region / concept board column", () => {
+    const html = render(
+      { "600519.SS": tech({ ticker: "600519.SS" }) },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+      new Set(),
+      {
+        "600519.SS": {
+          industry: "白酒Ⅱ",
+          region: "贵州板块",
+          concepts: ["超级品牌", "融资融券", "沪股通", "MSCI中国"],
+        },
+      },
+    );
+    assert.ok(html.includes("白酒Ⅱ · 贵州板块"), "industry and region on one line");
+    assert.ok(html.includes("超级品牌 / 融资融券 / 沪股通"), "top-3 concepts shown");
+    assert.ok(!html.includes("MSCI中国"), "concepts capped at three");
+  });
+
+  it("shows a dash in the board column when info is missing", () => {
+    const html = render(
+      { "AAPL": tech({ ticker: "AAPL" }) },
+      { "AAPL": quote({ ticker: "AAPL", currency: "USD", originalCurrency: "USD" }) },
+    );
+    assert.ok(html.includes("<td style=\"padding:4px 3px;border-bottom:1px solid #e2e8f0;color:#1a202c;\">—</td>"));
   });
 
   it("carries the same chips everywhere the stock name appears in the brief", () => {

@@ -6,6 +6,7 @@ import { buildEmailHtml } from "../src/email.js";
 // ranking, so the bold text on every card is the Chinese name. Populate the
 // same way here, otherwise display names fall back to the raw symbol.
 import { runtimeTickerNames } from "../src/config.js";
+import type { BoardInfo } from "../src/fetchBoards.js";
 import type { AIBuyRecommendation } from "../src/providers/types.js";
 import type { TechnicalData } from "../src/technicals.js";
 import type { QuoteData } from "../src/fetchPrices.js";
@@ -170,6 +171,17 @@ const hotNews: NewsItem[] = [
   { title: "证监会：进一步优化融券机制", url: "https://example.com", source: "上证报", publishedAt: "2026-11-05 18:55:00" },
 ];
 
+// 板块 column sample data — mirrors Eastmoney f127/f128/f129.
+const boards: Record<string, BoardInfo> = {
+  "600183.SS": { industry: "元件", region: "广东板块", concepts: ["5G概念", "华为概念", "PCB", "存储芯片", "通信技术"] },
+  "002463.SZ": { industry: "元件", region: "广东板块", concepts: ["PCB概念", "ChatGPT概念", "苹果概念"] },
+  "000651.SZ": { industry: "白色家电", region: "广东板块", concepts: ["消费电器", "智能家居", "超级品牌"] },
+  "601398.SS": { industry: "银行Ⅱ", region: "北京板块", concepts: ["参股银行", "跨境支付", "互联网金融"] },
+  "600519.SS": { industry: "白酒Ⅱ", region: "贵州板块", concepts: ["超级品牌", "融资融券", "沪股通"] },
+  "601988.SS": { industry: "银行Ⅱ", region: "北京板块", concepts: ["参股银行", "沪股通"] },
+  "601318.SS": { industry: "保险Ⅱ", region: "广东板块", concepts: ["参股银行", "沪股通", "富时罗素概念"] },
+};
+
 const html = buildEmailHtml(
   report,
   news,
@@ -179,6 +191,7 @@ const html = buildEmailHtml(
   [],
   hotNews,
   new Set(["601398.SS"]),
+  boards,
 );
 
 writeFileSync("smoke/email-preview.html", html, "utf8");

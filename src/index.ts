@@ -18,6 +18,7 @@ import { fetchPrices, fetchMacroIndicators, formatMacroContext } from "./fetchPr
 import { fetchTechnicals } from "./fetchTechnicals.js";
 import { fetchNews, fetchMarketHotNews } from "./fetchNews.js";
 import { fetchNationalTeamFlags } from "./fetchHolderFlags.js";
+import { fetchStockBoards } from "./fetchBoards.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -517,7 +518,7 @@ try {
     }
   } else {
     // Daily mode: full brief with news + AI + technicals
-    const [news, technicals, hotNews, nationalTeam] = await Promise.all([
+    const [news, technicals, hotNews, nationalTeam, boards] = await Promise.all([
       fetchNews(tickers, prices),
       fetchTechnicals(tickers, prices, fxRates),
       // Market-wide flashes for the "近 6 小时市场热点" block; failure is benign.
@@ -530,6 +531,11 @@ try {
       fetchNationalTeamFlags(tickers).catch((err) => {
         console.warn(`⚠ National-team flag fetch failed: ${(err as Error).message}`);
         return new Set<string>();
+      }),
+      // 行业/概念/地域板块 for the tech-screen table; failure is benign.
+      fetchStockBoards(tickers).catch((err) => {
+        console.warn(`⚠ Board info fetch failed: ${(err as Error).message}`);
+        return {} as Record<string, import("./fetchBoards.js").BoardInfo>;
       }),
     ]);
     // Cross-pair indicators come from the crypto.com candles, not Yahoo. Required,
@@ -564,7 +570,7 @@ try {
       });
     }
 
-    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam);
+    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards);
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);
     } catch (err) {

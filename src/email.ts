@@ -5,6 +5,7 @@ import type { AIBuyRecommendation } from "./aiAnalysis.js";
 import type { NewsItem } from "./fetchNews.js";
 import type { TechnicalData } from "./fetchTechnicals.js";
 import type { QuoteData } from "./fetchPrices.js";
+import type { BoardInfo } from "./fetchBoards.js";
 import { escapeHtmlAttr, formatMoney } from "./util.js";
 import { hasStrongBuyVote } from "./aiAggregation.js";
 
@@ -472,6 +473,7 @@ export function buildEmailHtml(
   fxSkipped: Array<{ ticker: string; reason: string }> = [],
   hotNews: NewsItem[] = [],
   nationalTeam: ReadonlySet<string> = new Set(),
+  boards: Record<string, BoardInfo> = {},
 ): string {
   const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
@@ -515,7 +517,7 @@ export function buildEmailHtml(
   const hasPortfolio = report.items.length > 0;
   const techScreenBlock = hasPortfolio
     ? ""
-    : techScreenSection(technicals, priceData, nationalTeam);
+    : techScreenSection(technicals, priceData, nationalTeam, boards);
   const statsSection = hasPortfolio
     ? `
 <!-- Portfolio Stats -->
@@ -816,6 +818,7 @@ function techScreenSection(
   technicals: Record<string, TechnicalData>,
   priceData: Record<string, QuoteData>,
   nationalTeam: ReadonlySet<string> = new Set(),
+  boards: Record<string, BoardInfo> = {},
 ): string {
   const entries = Object.entries(technicals);
   if (entries.length === 0) return "";
@@ -852,22 +855,41 @@ function techScreenSection(
         tags.push({ text: `动量${MOMENTUM_LABELS[t.momentumSignal] ?? t.momentumSignal}`, color: S.muted });
       }
 
-      // A limit-up or 连板 stock is not a "可关注" entry: the rules below would
-      // otherwise read the momentum as bullish and invite a chase.
+      // Tiered verdict by signal characteristics, rendered as a pill badge:
+      //   密切关注 — two or more bullish signals line up and none contradict;
+      //   可关注   — exactly one bullish signal (or mixed, one each side);
+      //   无需关注 — nothing bullish, or several bearish signals stacked.
+      // Daily limit states keep their dedicated "don't chase" verdicts.
+      const bullish =
+        (t.goldenCross ? 1 : 0) +
+        (t.macdCrossover === "bullish" ? 1 : 0) +
+        (t.rsi14 != null && t.rsi14 <= 35 ? 1 : 0) +
+        (t.volumeLatest1d != null && t.volumeLatest1d >= 1.5 && (chg ?? 0) > 0 ? 1 : 0);
+      const bearish =
+        (t.deathCross ? 1 : 0) +
+        (t.macdCrossover === "bearish" ? 1 : 0) +
+        (t.rsi14 != null && t.rsi14 >= 70 ? 1 : 0);
+
       const atLimitUp = chg != null && chg >= LIMIT_CHANGE_THRESHOLD;
       const atLimitDown = chg != null && chg <= -LIMIT_CHANGE_THRESHOLD;
-      const verdict =
+      const verdict: { text: string; bg: string; fg: string } =
         t.consecutiveLimitUps >= 2
-          ? { text: "妖股·勿追", color: S.purple }
+          ? { text: "妖股·勿追", bg: "#ede9fe", fg: "#6d28d9" }
           : atLimitUp
-            ? { text: "涨停·勿追", color: S.red }
+            ? { text: "涨停·勿追", bg: "#fee2e2", fg: "#b91c1c" }
             : atLimitDown
-              ? { text: "跌停·勿接", color: S.green }
-              : tags.some((x) => x.color === S.red) && !tags.some((x) => x.color === S.green)
-                ? { text: "不宜买", color: S.red }
-                : tags.some((x) => x.color === S.green)
-                  ? { text: "可关注", color: S.green }
-                  : { text: "观望", color: S.muted };
+              ? { text: "跌停·勿接", bg: "#dcfce7", fg: "#15803d" }
+              : bearish >= 2 || bullish === 0
+                ? { text: "无需关注", bg: "#f1f5f9", fg: "#64748b" }
+                : bullish >= 2
+                  ? { text: "密切关注", bg: "#dcfce7", fg: "#15803d" }
+                  : { text: "可关注", bg: "#fef9c3", fg: "#a16207" };
+
+      const board = boards[ticker];
+      const boardLine1 = board
+        ? [board.industry, board.region].filter(Boolean).join(" · ") || "—"
+        : "—";
+      const boardLine2 = board?.concepts.slice(0, 3).join(" / ") ?? "";
 
       const rowBg = accent ? `background:${accent.rowBg};` : "";
       const rowBorder = accent
@@ -877,11 +899,12 @@ function techScreenSection(
       return `
     <tr style="${rowBg}">
       <td style="padding:4px 3px;${rowBorder}border-bottom:1px solid ${S.border};font-weight:bold;color:#1a202c;">${displayName(ticker)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${ticker}</div>${chips.length > 0 ? `<div style="margin-top:2px;">${renderChips(chips)}</div>` : ""}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};color:#1a202c;">${boardLine1}${boardLine2 ? `<div style="font-size:9px;color:${S.muted};">${boardLine2}</div>` : ""}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${price != null ? fmt$(price) : "—"}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${chg == null ? "—" : fmtPct(chg)}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">RSI ${t.rsi14 ?? "—"}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">${tags.map((x) => `<span style="color:${x.color};font-size:10px;">${x.text}</span>`).join(" ")}</td>
-      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;"><span style="color:${verdict.color};font-size:11px;font-weight:bold;">${verdict.text}</span></td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;"><span style="display:inline-block;background:${verdict.bg};color:${verdict.fg};font-size:10px;font-weight:bold;padding:2px 8px;border-radius:10px;white-space:nowrap;">${verdict.text}</span></td>
     </tr>`;
     })
     .join("");
@@ -902,11 +925,17 @@ function techScreenSection(
   <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">
     老龙头：近一年涨幅&gt;100% 且两年涨停&gt;15 次 · 国家队：汇金/证金/社保/养老/国新现身前十大股东 · 白马：市值≥500亿、ROE≥10%、PE≤60
   </p>
+  <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">
+    结论分级：<span style="display:inline-block;background:#dcfce7;color:#15803d;font-weight:bold;padding:1px 6px;border-radius:10px;">密切关注</span> 两项以上利好共振（金叉/MACD多头/深度超卖/放量上涨） ·
+    <span style="display:inline-block;background:#fef9c3;color:#a16207;font-weight:bold;padding:1px 6px;border-radius:10px;">可关注</span> 单项利好 ·
+    <span style="display:inline-block;background:#f1f5f9;color:#64748b;font-weight:bold;padding:1px 6px;border-radius:10px;">无需关注</span> 无信号或多项利空叠加
+  </p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:11px;">
     <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
       <td style="padding:4px 3px 4px 6px;border-bottom:1px solid ${S.border};">名称</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">板块</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">涨跌</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">RSI</td>
@@ -928,6 +957,7 @@ export async function sendBrief(
   fxSkipped: Array<{ ticker: string; reason: string }> = [],
   hotNews: NewsItem[] = [],
   nationalTeam: ReadonlySet<string> = new Set(),
+  boards: Record<string, BoardInfo> = {},
 ): Promise<void> {
   const html = buildEmailHtml(
     report,
@@ -938,6 +968,7 @@ export async function sendBrief(
     fxSkipped,
     hotNews,
     nationalTeam,
+    boards,
   );
 
   const { error } = await resend.emails.send({
