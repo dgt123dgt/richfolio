@@ -2,11 +2,26 @@
 // reviewed in a browser without sending an email or running the pipeline.
 import { writeFileSync } from "node:fs";
 import { buildEmailHtml } from "../src/email.js";
+// Preview fidelity: production fills runtimeTickerNames from the Guba hot-stock
+// ranking, so the bold text on every card is the Chinese name. Populate the
+// same way here, otherwise display names fall back to the raw symbol.
+import { runtimeTickerNames } from "../src/config.js";
 import type { AIBuyRecommendation } from "../src/providers/types.js";
 import type { TechnicalData } from "../src/technicals.js";
 import type { QuoteData } from "../src/fetchPrices.js";
 import type { NewsItem } from "../src/fetchNews.js";
 import type { AllocationReport } from "../src/allocation.js";
+
+// Same names the Guba ranking would supply at runtime.
+Object.assign(runtimeTickerNames, {
+  "600183.SS": "生益科技",
+  "002463.SZ": "深南电路",
+  "000651.SZ": "格力电器",
+  "601398.SS": "工商银行",
+  "600519.SS": "贵州茅台",
+  "601988.SS": "中国银行",
+  "601318.SS": "中国平安",
+});
 
 const report: AllocationReport = {
   items: [],
