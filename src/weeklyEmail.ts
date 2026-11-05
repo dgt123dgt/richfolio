@@ -108,15 +108,22 @@ ${
   本周没有可复盘的预测记录（复盘功能刚上线，需要积累几天的每日简报数据后才有意义）。
 </td></tr>`
     : `
-<!-- Failure diagnosis -->
+<!-- Per-AI self-reviews -->
 ${
-  review.diagnosis
-    ? `<tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">失败因素诊断（AI 分析）</h2>
+  review.perAI.filter((a) => a.text).length > 0
+    ? review.perAI
+        .filter((a) => a.text)
+        .map(
+          (a) => `
+<tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">${a.label} 的周度自我复盘 <span style="font-size:11px;color:${S.muted};font-weight:normal;">准${a.hits} / 错${a.misses}${a.hits + a.misses > 0 ? ` · ${((a.hits / (a.hits + a.misses)) * 100).toFixed(0)}%` : ""}</span></h2>
+  <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">仅基于该 AI 自己的预测与当日简报存档；包含得失总结、对简报的修改建议与后续优化方向。</p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
-  <div style="font-size:12px;color:${S.text};line-height:1.7;white-space:pre-line;">${review.diagnosis}</div>
-</td></tr>`
+  <div style="font-size:12px;color:${S.text};line-height:1.7;white-space:pre-line;">${a.text}</div>
+</td></tr>`,
+        )
+        .join("")
     : ""
 }
 

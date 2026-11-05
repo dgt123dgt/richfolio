@@ -23,11 +23,16 @@ import { getLongTermLabels } from "./stockLabels.js";
 import { fetchMarketSentiment } from "./marketSentiment.js";
 import { sendQQText, buildEveningDigest, buildIntradayDigest } from "./qqNotify.js";
 import {
+  BOOK_IDS,
+  type BookId,
+  beijingDate,
   executeDailyTrades,
   snapshotAndSummarize,
   type PaperSummary,
   type ExecutedTrade,
 } from "./paperTrading.js";
+import { recsForProvider } from "./aiAggregation.js";
+import { saveBriefArchive } from "./briefArchive.js";
 import { sendIntradayBrief } from "./email.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
@@ -531,10 +536,10 @@ try {
       for (const q of Object.values(prices)) {
         if (/\.(SS|SZ)$/i.test(q.ticker) && q.currency === "CNY") cnyPrices[q.ticker] = q.price;
       }
-      const paper = snapshotAndSummarize({ prices: cnyPrices });
-      const qqOk = await sendQQText(buildIntradayDigest({ sentiment, aiRecs, paper }));
+      const books = BOOK_IDS.map((id) => ({ id, paper: snapshotAndSummarize(id, { prices: cnyPrices }) }));
+      const qqOk = await sendQQText(buildIntradayDigest({ sentiment, aiRecs, books }));
       if (qqOk) console.log("QQ intraday digest pushed");
-      await sendIntradayBrief({ sentiment, aiRecs, paper });
+      await sendIntradayBrief({ sentiment, aiRecs, books });
     } catch (err) {
       console.warn(`⚠ Intraday brief push failed: ${(err as Error).message}`);
     }
@@ -617,32 +622,50 @@ try {
     const longTermLabels = getLongTermLabels(tickers, prices, boards);
     await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards, longTermLabels, sentiment);
 
-    // 模拟盘：AI 建议按当日收盘价撮合，SQLite 记账（按交易日幂等，本地/云端
-    // 谁先跑谁成交，重复运行不会重复下单）。仅 A 股参与，资金为人民币。
-    let paper: PaperSummary | null = null;
-    let todayTrades: ExecutedTrade[] = [];
+    // 双 AI 模拟盘：DeepSeek 仓 / Gemini 仓各自独立记账，各按当日收盘价撮合
+    // 自己 provider 的投票（按交易日幂等，重复运行不会重复下单）。仅 A 股。
+    const bookStates: Array<{ id: BookId; paper: PaperSummary; trades: ExecutedTrade[] }> = [];
     try {
       const cnyPrices: Record<string, number> = {};
       for (const q of Object.values(prices)) {
         if (/\.(SS|SZ)$/i.test(q.ticker) && q.currency === "CNY") cnyPrices[q.ticker] = q.price;
       }
-      const exec = executeDailyTrades({ prices: cnyPrices, aiRecs, sentiment });
-      todayTrades = exec.trades;
-      paper = snapshotAndSummarize({ prices: cnyPrices });
-      console.log(
-        `Paper trading: ${exec.skipped ? "already filled today (skipped)" : `${exec.trades.length} trade(s)`} — cash ¥${paper.cash}, position ${paper.positionPct}%, month P&L ¥${paper.pnlMonth}`,
-      );
+      for (const id of BOOK_IDS) {
+        const providerRecs = recsForProvider(aiRecs, id);
+        const exec = executeDailyTrades(id, { prices: cnyPrices, aiRecs: providerRecs, sentiment });
+        const paper = snapshotAndSummarize(id, { prices: cnyPrices });
+        bookStates.push({ id, paper, trades: exec.trades });
+        console.log(
+          `Paper trading [${id}]: ${exec.skipped ? "already filled today (skipped)" : `${exec.trades.length} trade(s)`} — position ${paper.positionPct}%, month P&L ¥${paper.pnlMonth}`,
+        );
+      }
     } catch (err) {
       console.warn(`⚠ Paper trading failed (email/QQ unaffected): ${(err as Error).message}`);
     }
 
+    // 每晚简报存档：情绪/资金/题材/热点/双 AI 投票/双仓状态写入
+    // state/brief-archive/<日期>.json，周报复盘时喂回两个 AI。
+    try {
+      saveBriefArchive({
+        date: beijingDate(),
+        sentiment,
+        hotNews: hotNews.slice(0, 10).map((n) => ({ title: n.title, source: n.source, publishedAt: n.publishedAt })),
+        aiRecs,
+        books: Object.fromEntries(
+          bookStates.map((b) => [b.id, { paper: b.paper, trades: b.trades }]),
+        ),
+      });
+    } catch (err) {
+      console.warn(`⚠ Brief archive failed: ${(err as Error).message}`);
+    }
+
     // QQ 官方机器人第二通道 — enabled only when QQ_BOT_APPID/SECRET/OPENID are
     // all set; best-effort, the email above stays the authoritative delivery.
-    // 盘后版只说三件事：今天情绪怎么样 / 模拟盘仓位与操作 / 盈亏.
-    if (paper) {
+    // 盘后版只说三件事：今天情绪怎么样 / 双仓仓位与操作 / 盈亏.
+    if (bookStates.length > 0) {
       try {
         const qqOk = await sendQQText(
-          buildEveningDigest({ sentiment, paper, trades: todayTrades }),
+          buildEveningDigest({ sentiment, books: bookStates }),
         );
         if (qqOk) console.log("QQ digest pushed");
       } catch (err) {

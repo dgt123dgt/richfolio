@@ -4,7 +4,7 @@ import {
   buildEveningDigest,
   buildIntradayDigest,
   sentimentLine,
-  paperLine,
+  bookLine,
   chunkText,
 } from "../src/qqNotify.js";
 import type { MarketSentiment } from "../src/marketSentiment.js";
@@ -64,13 +64,13 @@ function paperFixture(): PaperSummary {
   };
 }
 
-describe("sentimentLine / paperLine", () => {
-  it("one line each: sentiment verdict + paper position & P&L", () => {
+describe("sentimentLine / bookLine", () => {
+  it("one line each: sentiment verdict + book position & P&L", () => {
     const s = sentimentLine(sentiment());
     assert.ok(s.includes("情绪:分歧(命中3/6)"));
     assert.ok(s.includes("仓位建议:20%–30%"));
-    const p = paperLine(paperFixture());
-    assert.ok(p.includes("模拟仓:总¥20,000 仓位19%"));
+    const p = bookLine("DeepSeek", paperFixture());
+    assert.ok(p.startsWith("DeepSeek仓:总¥20,000 仓位19%"));
     assert.ok(p.includes("本月+0.3%"));
     assert.ok(p.includes("持仓:贵州茅台"));
   });
@@ -81,54 +81,49 @@ describe("sentimentLine / paperLine", () => {
 });
 
 describe("buildEveningDigest", () => {
-  it("sentiment + mainline + paper ops + P&L — nothing else", () => {
+  it("sentiment + mainline + both books' ops + P&L — nothing else", () => {
     const text = buildEveningDigest({
       sentiment: sentiment(),
-      paper: paperFixture(),
-      trades: [
-        { action: "BUY", ticker: "600519.SS", name: "贵州茅台", shares: 200, price: 19.0, amount: 3800, reason: "AI STRONG BUY" },
+      books: [
+        { id: "deepseek", paper: paperFixture(), trades: [
+          { action: "BUY", ticker: "600519.SS", name: "贵州茅台", shares: 200, price: 19.0, amount: 3800, reason: "AI STRONG BUY" },
+        ] },
+        { id: "gemini", paper: { ...paperFixture(), holdings: [], pnlDay: null, pnlDayPct: null, pnlMonth: 0, pnlMonthPct: 0 }, trades: [] },
       ],
       date: new Date("2026-11-05T22:00:00"),
     });
     assert.ok(text.startsWith("【盘后简报】11/5"));
     assert.ok(text.includes("情绪:分歧(命中3/6)"));
     assert.ok(text.includes("主线:光伏概念[主升] 龙头闽发铝业4板"));
-    assert.ok(text.includes("模拟仓:"));
+    assert.ok(text.includes("DeepSeek仓:总¥20,000 仓位19%"));
+    assert.ok(text.includes("Gemini仓:"));
     assert.ok(text.includes("买入 贵州茅台 200股@19.00 ¥3800"));
+    assert.ok(text.includes("操作:无（观望）"), "idle book still reported");
     // The noise the user asked to strip must NOT come back:
     assert.ok(!text.includes("梯队:"), "no ladder line");
     assert.ok(!text.includes("〔"), "no section banners");
     assert.ok(!text.includes("明日:"), "no scenario branches");
     assert.ok(!text.includes("题材:"), "no concept dump");
   });
-
-  it("no-trades day renders 观望, empty book renders 空仓", () => {
-    const empty: PaperSummary = { ...paperFixture(), holdings: [], pnlDay: null, pnlDayPct: null };
-    const text = buildEveningDigest({
-      sentiment: null,
-      paper: empty,
-      trades: [],
-      date: new Date("2026-11-07T22:00:00"),
-    });
-    assert.ok(text.includes("情绪:数据缺失"));
-    assert.ok(text.includes("今日操作:无（观望）"));
-    assert.ok(text.includes("空仓"));
-  });
 });
 
 describe("buildIntradayDigest", () => {
-  it("sentiment + AI picks + paper P&L only", () => {
+  it("sentiment + AI picks + both books' P&L only", () => {
     const text = buildIntradayDigest({
       sentiment: sentiment(),
       aiRecs: [rec("600519.SS", "STRONG BUY", 82), rec("000001.SZ", "WAIT", 40)],
-      paper: paperFixture(),
+      books: [
+        { id: "deepseek", paper: paperFixture() },
+        { id: "gemini", paper: { ...paperFixture(), holdings: [], pnlDay: null, pnlDayPct: null, pnlMonth: 0, pnlMonthPct: 0 } },
+      ],
       date: new Date("2026-11-06T10:00:00"),
     });
     assert.ok(text.startsWith("【盘中快报】11/6"));
     assert.ok(text.includes("AI推荐:"), "AI line present");
     assert.ok(text.includes("(82%)"), "top pick with confidence");
     assert.ok(!text.includes("(40%)"), "non-buy recs stay out");
-    assert.ok(text.includes("模拟仓:"));
+    assert.ok(text.includes("DeepSeek仓:"));
+    assert.ok(text.includes("Gemini仓:"));
     assert.ok(text.includes("持仓:"));
     assert.ok(!text.includes("梯队:"), "no ladder line");
   });
@@ -137,7 +132,7 @@ describe("buildIntradayDigest", () => {
     const text = buildIntradayDigest({
       sentiment: sentiment(),
       aiRecs: [rec("600519.SS", "HOLD", 50)],
-      paper: paperFixture(),
+      books: [{ id: "deepseek", paper: paperFixture() }],
       date: new Date("2026-11-06T13:00:00"),
     });
     assert.ok(text.includes("今日暂无买入级标的"));

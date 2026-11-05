@@ -1,11 +1,13 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
-import { unlinkSync } from "node:fs";
+import { unlinkSync, rmSync, mkdirSync } from "node:fs";
 
-// DB must point at a throwaway file BEFORE the module loads (path read at import).
-process.env.PAPER_TRADING_DB = "data/.test-paper.db";
+// Books must point at a throwaway dir BEFORE the module loads (paths read at import).
+process.env.PAPER_TRADING_DB_DIR = "data/.test-paper-books";
+mkdirSync("data/.test-paper-books", { recursive: true });
 
 const {
+  BOOK_IDS,
   executeDailyTrades,
   snapshotAndSummarize,
   parseTargetPositionPct,
@@ -14,6 +16,10 @@ const {
   formatTrade,
   MONTHLY_CAPITAL,
 } = await import("../src/paperTrading.js");
+const { recsForProvider } = await import("../src/aiAggregation.js");
+const { saveBriefArchive, loadBriefArchive, archiveContextBlock } = await import(
+  "../src/briefArchive.js"
+);
 import type { MarketSentiment } from "../src/marketSentiment.js";
 import type { AIBuyRecommendation } from "../src/providers/types.js";
 import type { ExecutedTrade } from "../src/paperTrading.js";
@@ -61,21 +67,6 @@ function rec(ticker: string, action: string, confidence = 77): AIBuyRecommendati
 
 const PRICES = { "600519.SS": 19.0, "000001.SZ": 10.0, "002407.SZ": 30.0 };
 
-function paperFixture(): PaperSummary {
-  return {
-    month: "2026-11",
-    cash: 16200,
-    marketValue: 3800,
-    total: 20000,
-    positionPct: 19,
-    holdings: [{ ticker: "600519.SS", name: "贵州茅台", shares: 200, price: 19.5, pnlPct: 2.6 }],
-    pnlDay: 12.5,
-    pnlDayPct: 0.06,
-    pnlMonth: 64,
-    pnlMonthPct: 0.32,
-  };
-}
-
 // ── position sizing ─────────────────────────────────────────────────
 
 describe("parseTargetPositionPct", () => {
@@ -101,95 +92,102 @@ describe("tradingDaysBetween", () => {
   });
 });
 
-// ── engine ──────────────────────────────────────────────────────────
+// ── per-provider rec feeds ──────────────────────────────────────────
 
-describe("paper trading engine", () => {
+describe("recsForProvider", () => {
+  it("splits aggregated recs into provider-private lists", () => {
+    const aggregated = {
+      ...rec("600519.SS", "STRONG BUY", 80),
+      providers: [
+        { providerId: "deepseek", action: "STRONG BUY", confidence: 88, reason: "DS 理由", suggestedBuyValue: 0 },
+        { providerId: "gemini", action: "WAIT", confidence: 35, reason: "GM 理由", suggestedBuyValue: 0 },
+      ],
+    } as AIBuyRecommendation;
+    const ds = recsForProvider([aggregated], "deepseek");
+    const gm = recsForProvider([aggregated], "gemini");
+    assert.equal(ds.length, 1);
+    assert.equal(ds[0].action, "STRONG BUY");
+    assert.equal(ds[0].confidence, 88);
+    assert.equal(gm[0].action, "WAIT", "Gemini's own dissent survives");
+    // A rec with no vote from that provider stays out of its book.
+    const lone = recsForProvider([{ ...rec("000001.SZ", "BUY"), providers: [{ providerId: "deepseek", action: "BUY", confidence: 60, reason: "", suggestedBuyValue: 0 }] } as AIBuyRecommendation], "gemini");
+    assert.equal(lone.length, 0);
+  });
+});
+
+// ── engine (per book) ───────────────────────────────────────────────
+
+describe("paper trading books", () => {
   before(() => {
-    // Fresh file per test run keeps the fixture math predictable.
-    try {
-      unlinkSync("data/.test-paper.db");
-    } catch {
-      /* first run — nothing to clean */
+    // Fresh files per test run keep the fixture math predictable.
+    for (const id of ["deepseek", "gemini"]) {
+      try {
+        unlinkSync(`data/.test-paper-books/paper-trading-${id}.db`);
+      } catch {
+        /* first run — nothing to clean */
+      }
     }
   });
 
-  it("starts with the monthly capital and fills BUY calls in confidence order", () => {
-    const { trades } = executeDailyTrades({
+  it("each book starts with its own capital and fills only its provider's votes", () => {
+    const [ds, gm] = BOOK_IDS;
+    const { trades } = executeDailyTrades(ds, {
       date: "2026-11-05",
       prices: PRICES,
       aiRecs: [rec("600519.SS", "STRONG BUY", 82), rec("000001.SZ", "BUY", 71), rec("AAPL", "BUY", 99)],
       sentiment: sentiment(),
     });
     assert.equal(MONTHLY_CAPITAL, 20000);
-    // AAPL is not an A-share — must never fill.
     assert.ok(trades.every((t: ExecutedTrade) => /\.(SS|SZ)$/.test(t.ticker)));
-    assert.ok(trades.length >= 1, "at least one fill");
-    const buy = trades[0];
-    assert.equal(buy.action, "BUY");
-    assert.equal(buy.shares % 100, 0, "board-lot rounding");
-    const snap = snapshotAndSummarize({ date: "2026-11-05", prices: PRICES });
+    assert.ok(trades.length >= 1);
+    assert.equal(trades[0].shares % 100, 0, "board-lot rounding");
+    const snap = snapshotAndSummarize(ds, { date: "2026-11-05", prices: PRICES });
     assert.ok(snap.cash <= 20000 && snap.cash >= 0);
     assert.ok(snap.positionPct <= 30.5, `target 25% cap respected (got ${snap.positionPct}%)`);
+
+    // Gemini's book is a separate universe — empty account, no shared state.
+    const gmSnap = snapshotAndSummarize(gm, { date: "2026-11-05", prices: PRICES });
+    assert.equal(gmSnap.total, 20000, "Gemini book untouched by DeepSeek fills");
+    assert.equal(gmSnap.holdings.length, 0);
   });
 
-  it("is idempotent per trade date — a second run re-fills nothing", () => {
-    const second = executeDailyTrades({
+  it("is idempotent per trade date per book", () => {
+    const [ds] = BOOK_IDS;
+    const second = executeDailyTrades(ds, {
       date: "2026-11-05",
       prices: PRICES,
       aiRecs: [rec("600519.SS", "STRONG BUY", 82)],
       sentiment: sentiment(),
     });
     assert.equal(second.skipped, true);
-    assert.deepEqual(second.trades, tradesForDate("2026-11-05"));
+    assert.deepEqual(second.trades, tradesForDate(ds, "2026-11-05"));
   });
 
   it("liquidates everything when the phase turns 退潮", () => {
-    const s = sentiment({ phase: "退潮" } as Partial<MarketSentiment>);
-    const { trades } = executeDailyTrades({
+    const [gm] = BOOK_IDS;
+    const { trades } = executeDailyTrades(gm, {
       date: "2026-11-06",
       prices: PRICES,
       aiRecs: [],
-      sentiment: s,
+      sentiment: sentiment({ phase: "退潮" } as Partial<MarketSentiment>),
     });
     assert.ok(trades.length > 0);
     assert.ok(trades.every((t: ExecutedTrade) => t.action === "SELL"));
-    const snap = snapshotAndSummarize({ date: "2026-11-06", prices: PRICES });
+    const snap = snapshotAndSummarize(gm, { date: "2026-11-06", prices: PRICES });
     assert.equal(snap.positionPct, 0);
     assert.ok(snap.cash > 0);
   });
 
-  it("resets to full capital when the month rolls over", () => {
-    // Hold something into month-end (new November date, so no guard collision).
-    const nov = executeDailyTrades({
-      date: "2026-11-28",
-      prices: PRICES,
-      aiRecs: [rec("600519.SS", "STRONG BUY", 80)],
-      sentiment: sentiment(),
-    });
-    console.log("DEBUG 11-28:", JSON.stringify(nov));
-    const { trades } = executeDailyTrades({
-      date: "2026-12-01",
-      prices: PRICES,
-      aiRecs: [],
-      sentiment: sentiment(),
-    });
-    console.log("DEBUG 12-01 trades:", JSON.stringify(trades));
-    // 2026-11 account existed → month change triggers liquidation + re-fund.
-    assert.ok(trades.some((t: ExecutedTrade) => t.reason.includes("月末清仓")));
-    const snap = snapshotAndSummarize({ date: "2026-12-01", prices: PRICES });
-    assert.equal(snap.cash, 20000);
-    assert.equal(snap.month, "2026-12");
-  });
-
   it("enforces the 5-trading-day cap with weekends excluded", () => {
+    const [gm] = BOOK_IDS;
     // Buy Monday 11-09 → held days: 9,10,11,12,13 (Fri) = 5; Monday 11-16 = 6 → force-sell.
-    executeDailyTrades({
+    executeDailyTrades(gm, {
       date: "2026-11-09",
       prices: PRICES,
       aiRecs: [rec("600519.SS", "STRONG BUY", 80)],
       sentiment: sentiment(),
     });
-    const { trades } = executeDailyTrades({
+    const { trades } = executeDailyTrades(gm, {
       date: "2026-11-16",
       prices: PRICES,
       aiRecs: [rec("600519.SS", "STRONG BUY", 85)], // AI 想加仓也不行
@@ -199,8 +197,28 @@ describe("paper trading engine", () => {
       trades.some((t: ExecutedTrade) => t.action === "SELL" && t.reason.includes("强制卖出")),
       `stale position force-sold, got: ${JSON.stringify(trades)}`,
     );
-    const snap = snapshotAndSummarize({ date: "2026-11-16", prices: PRICES });
+    const snap = snapshotAndSummarize(gm, { date: "2026-11-16", prices: PRICES });
     assert.equal(snap.holdings.length, 0);
+  });
+
+  it("resets to full capital when the month rolls over", () => {
+    const [ds] = BOOK_IDS;
+    executeDailyTrades(ds, {
+      date: "2026-11-28",
+      prices: PRICES,
+      aiRecs: [rec("600519.SS", "STRONG BUY", 80)],
+      sentiment: sentiment(),
+    });
+    const { trades } = executeDailyTrades(ds, {
+      date: "2026-12-01",
+      prices: PRICES,
+      aiRecs: [],
+      sentiment: sentiment(),
+    });
+    assert.ok(trades.some((t: ExecutedTrade) => t.reason.includes("月末清仓")));
+    const snap = snapshotAndSummarize(ds, { date: "2026-12-01", prices: PRICES });
+    assert.equal(snap.cash, 20000);
+    assert.equal(snap.month, "2026-12");
   });
 
   it("formats trades compactly", () => {
@@ -208,5 +226,38 @@ describe("paper trading engine", () => {
       action: "BUY", ticker: "600519.SS", name: "贵州茅台", shares: 200, price: 19.0, amount: 3800, reason: "AI BUY",
     });
     assert.equal(text, "买入 贵州茅台 200股@19.00 ¥3800");
+  });
+});
+
+// ── brief archive ───────────────────────────────────────────────────
+
+describe("brief archive", () => {
+  it("roundtrips a day and renders a compact context block", () => {
+    const archive = {
+      date: "2026-11-05",
+      sentiment: sentiment(),
+      hotNews: [{ title: "央行宣布降准", source: "东方财富", publishedAt: "2026-11-05T09:00:00" }],
+      aiRecs: [rec("600519.SS", "STRONG BUY", 80)],
+      books: {
+        deepseek: {
+          paper: { month: "2026-11", cash: 16200, marketValue: 3800, total: 20000, positionPct: 19, holdings: [], pnlDay: 12.5, pnlDayPct: 0.06, pnlMonth: 64, pnlMonthPct: 0.32 },
+          trades: [{ action: "BUY", ticker: "600519.SS", name: "贵州茅台", shares: 200, price: 19.0, amount: 3800, reason: "AI STRONG BUY" }],
+        },
+        gemini: {
+          paper: { month: "2026-11", cash: 20000, marketValue: 0, total: 20000, positionPct: 0, holdings: [], pnlDay: null, pnlDayPct: null, pnlMonth: 0, pnlMonthPct: 0 },
+          trades: [],
+        },
+      },
+    };
+    saveBriefArchive(archive as never);
+    const loaded = loadBriefArchive("2026-11-05");
+    assert.ok(loaded);
+    assert.equal(loaded!.sentiment.phase, "分歧");
+    assert.ok(loaded!.books.gemini);
+    const block = archiveContextBlock([loaded!]);
+    assert.ok(block.includes("■ 2026-11-05"));
+    assert.ok(block.includes("情绪:分歧(命中3/6)"));
+    assert.ok(block.includes("题材:光伏概念[主升]"));
+    assert.ok(block.includes("deepseek仓:仓位19%"));
   });
 });

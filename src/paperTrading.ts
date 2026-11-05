@@ -27,7 +27,22 @@ import { displayName } from "./config.js";
 import type { AIBuyRecommendation } from "./aiAnalysis.js";
 import type { MarketSentiment } from "./marketSentiment.js";
 
-const DB_PATH = process.env.PAPER_TRADING_DB ?? "data/paper-trading.db";
+// ── Books ───────────────────────────────────────────────────────────
+// Two independent books, one per AI provider: each gets its own SQLite file,
+// its own ¥20,000 monthly capital and its own fills from that provider's
+// votes only — DeepSeek and Gemini never see or influence each other's book.
+export const BOOK_IDS = ["deepseek", "gemini"] as const;
+export type BookId = (typeof BOOK_IDS)[number];
+export const BOOK_LABELS: Record<BookId, string> = {
+  deepseek: "DeepSeek",
+  gemini: "Gemini",
+};
+
+function dbPathFor(book: BookId): string {
+  const dir = process.env.PAPER_TRADING_DB_DIR ?? "data";
+  return resolve(dir, `paper-trading-${book}.db`);
+}
+
 export const MONTHLY_CAPITAL = Number(process.env.PAPER_MONTHLY_CAPITAL ?? 20_000);
 const MAX_BUYS_PER_DAY = 3;
 const MIN_BUDGET = 500; // below this even one 100-share lot of a ¥5 stock won't fit
@@ -58,11 +73,12 @@ export interface PaperSummary {
 
 // ── DB bootstrap ────────────────────────────────────────────────────
 
-let _db: DatabaseSync | null = null;
+const _dbs = new Map<BookId, DatabaseSync>();
 
-function getDb(): DatabaseSync {
-  if (_db) return _db;
-  const file = resolve(DB_PATH);
+function getDb(book: BookId): DatabaseSync {
+  const cached = _dbs.get(book);
+  if (cached) return cached;
+  const file = dbPathFor(book);
   mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(`
@@ -128,7 +144,7 @@ function getDb(): DatabaseSync {
   } catch {
     /* column already exists */
   }
-  _db = db;
+  _dbs.set(book, db);
   return db;
 }
 
@@ -259,13 +275,16 @@ function isAshare(ticker: string): boolean {
  * the trade_days marker (NOT daily_pnl — intraday summaries upsert that table
  * and must never block the evening run from filling).
  */
-export function executeDailyTrades(input: {
-  date?: string;
-  prices: Record<string, number>; // CNY close prices, A-share tickers only
-  aiRecs: AIBuyRecommendation[];
-  sentiment: MarketSentiment | null;
-}): { skipped: boolean; trades: ExecutedTrade[] } {
-  const db = getDb();
+export function executeDailyTrades(
+  book: BookId,
+  input: {
+    date?: string;
+    prices: Record<string, number>; // CNY close prices, A-share tickers only
+    aiRecs: AIBuyRecommendation[];
+    sentiment: MarketSentiment | null;
+  },
+): { skipped: boolean; trades: ExecutedTrade[] } {
+  const db = getDb(book);
   const date = input.date ?? beijingDate();
   ensureAccount(db, date);
   const trades: ExecutedTrade[] = [];
@@ -405,11 +424,14 @@ function holdingsPct(p: { shares: number; avg_cost: number }, price?: number): n
  * Write the day's daily_pnl row (idempotent upsert) and return the summary
  * used by both QQ digests and the intraday email.
  */
-export function snapshotAndSummarize(input: {
-  date?: string;
-  prices: Record<string, number>; // CNY prices for held tickers
-}): PaperSummary {
-  const db = getDb();
+export function snapshotAndSummarize(
+  book: BookId,
+  input: {
+    date?: string;
+    prices: Record<string, number>; // CNY prices for held tickers
+  },
+): PaperSummary {
+  const db = getDb(book);
   const date = input.date ?? beijingDate();
   ensureAccount(db, date);
 
@@ -456,8 +478,8 @@ export function snapshotAndSummarize(input: {
 }
 
 /** Today's executed trades (for the evening digest's 操作 line). */
-export function tradesForDate(date: string = beijingDate()): ExecutedTrade[] {
-  const db = getDb();
+export function tradesForDate(book: BookId, date: string = beijingDate()): ExecutedTrade[] {
+  const db = getDb(book);
   const rows = db.prepare("SELECT * FROM trades WHERE trade_date = ? ORDER BY id").all(date) as Array<{
     action: string; ticker: string; name: string; shares: number; price: number; amount: number; reason: string;
   }>;

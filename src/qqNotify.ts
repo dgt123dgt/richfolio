@@ -21,10 +21,18 @@ import type { AIBuyRecommendation } from "./aiAnalysis.js";
 import type { MarketSentiment } from "./marketSentiment.js";
 import { formatMoney } from "./util.js";
 import {
+  BOOK_LABELS,
+  type BookId,
   formatTrade,
   type ExecutedTrade,
   type PaperSummary,
 } from "./paperTrading.js";
+
+export interface BookState {
+  id: BookId;
+  paper: PaperSummary;
+  trades: ExecutedTrade[];
+}
 
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
 const MSG_URL = (openid: string) =>
@@ -67,22 +75,21 @@ export function sentimentLine(s: MarketSentiment | null): string {
   );
 }
 
-export function paperLine(p: PaperSummary): string {
+export function bookLine(label: string, p: PaperSummary): string {
   const held = p.holdings
     .map((h) => `${h.name}(${pct(h.pnlPct)})`)
     .join("、");
   return (
-    `模拟仓:总${money(p.total)} 仓位${p.positionPct.toFixed(0)}% ` +
+    `${label}仓:总${money(p.total)} 仓位${p.positionPct.toFixed(0)}% ` +
     `盈亏:今日${pct(p.pnlDayPct)} 本月${pct(p.pnlMonthPct)}(${p.pnlMonth >= 0 ? "+" : ""}${Math.round(p.pnlMonth)}元)` +
     (held ? `｜持仓:${held}` : "｜空仓")
   );
 }
 
-/** 22:00 盘后简报 — 情绪 + 当日模拟操作 + 盈亏. */
+/** 22:00 盘后简报 — 情绪 + 两个模拟仓各自操作与盈亏. */
 export function buildEveningDigest(input: {
   sentiment: MarketSentiment | null;
-  paper: PaperSummary;
-  trades: ExecutedTrade[];
+  books: BookState[];
   date?: Date;
 }): string {
   const d = input.date ?? new Date();
@@ -97,18 +104,20 @@ export function buildEveningDigest(input: {
     );
   }
   if (input.sentiment?.leaderAlert) lines.push(input.sentiment.leaderAlert);
-  lines.push(paperLine(input.paper));
-  lines.push(
-    `今日操作:${input.trades.length > 0 ? input.trades.map(formatTrade).join("；") : "无（观望）"}`,
-  );
+  for (const b of input.books) {
+    lines.push(bookLine(BOOK_LABELS[b.id] ?? b.id, b.paper));
+    lines.push(
+      `  操作:${b.trades.length > 0 ? b.trades.map(formatTrade).join("；") : "无（观望）"}`,
+    );
+  }
   return lines.filter(Boolean).join("\n");
 }
 
-/** 10:00 / 13:00 盘中快报 — 情绪 + AI 推荐 + 持仓盈亏. */
+/** 10:00 / 13:00 盘中快报 — 情绪 + AI 推荐 + 两仓盈亏. */
 export function buildIntradayDigest(input: {
   sentiment: MarketSentiment | null;
   aiRecs: AIBuyRecommendation[];
-  paper: PaperSummary;
+  books: Array<{ id: BookId; paper: PaperSummary }>;
   date?: Date;
 }): string {
   const d = input.date ?? new Date();
@@ -136,7 +145,9 @@ export function buildIntradayDigest(input: {
   } else {
     lines.push("AI推荐:今日暂无买入级标的");
   }
-  lines.push(paperLine(input.paper));
+  for (const b of input.books) {
+    lines.push(bookLine(BOOK_LABELS[b.id] ?? b.id, b.paper));
+  }
   return lines.filter(Boolean).join("\n");
 }
 

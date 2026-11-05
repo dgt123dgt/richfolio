@@ -14,9 +14,11 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { GEMINI_MODEL } from "./providers/gemini.js";
+import { deepseekCall, deepseekModel } from "./providers/deepseek.js";
 import { loadReasoningHistory } from "./state.js";
 import { fetchPrices } from "./fetchPrices.js";
 import { defaultCurrency } from "./config.js";
+import { loadBriefArchives, archiveContextBlock } from "./briefArchive.js";
 
 export interface PredictionOutcome {
   date: string;
@@ -31,6 +33,17 @@ export interface PredictionOutcome {
   reason: string;
 }
 
+/** One AI's weekly self-review: 得失 + 简报修改建议 + 后续优化方向. */
+export interface AIWeeklySummary {
+  providerId: string;
+  label: string;
+  hits: number;
+  misses: number;
+  accuracy: number;
+  /** AI-written Simplified-Chinese self-review, may be empty on API failure. */
+  text: string;
+}
+
 export interface WeeklyReview {
   generatedAt: string;
   daysCovered: string[];
@@ -41,8 +54,8 @@ export interface WeeklyReview {
   /** hits / (hits + misses), 0-100; 0 when nothing scored. */
   accuracy: number;
   perProvider: Record<string, { hits: number; misses: number }>;
-  /** AI-written failure-factor analysis (Simplified Chinese), may be empty. */
-  diagnosis: string;
+  /** Per-AI self-reviews (DeepSeek / Gemini), each covering its own book. */
+  perAI: AIWeeklySummary[];
   hasData: boolean;
 }
 
@@ -164,7 +177,29 @@ export async function buildWeeklyReview(
   const scored = hits.length + misses.length;
   const accuracy = scored > 0 ? (hits.length / scored) * 100 : 0;
 
-  const diagnosis = misses.length > 0 ? await diagnoseMisses(misses) : "";
+  // 简报存档 → 双 AI 各自复盘。存档缺失时上下文块为空，AI 只能基于案例复盘。
+  const archives = loadBriefArchives(daysCovered);
+  const contextBlock = archiveContextBlock(archives);
+
+  const perAI: AIWeeklySummary[] = [];
+  for (const providerId of ["deepseek", "gemini"] as const) {
+    const own = [...hits, ...misses].filter((o) => o.providerId === providerId);
+    const ownHits = own.filter((o) => o.result === "hit").length;
+    const ownMisses = own.filter((o) => o.result === "miss").length;
+    const ownScored = ownHits + ownMisses;
+    const text =
+      own.length > 0
+        ? await diagnoseProvider(providerId, own, contextBlock)
+        : "";
+    perAI.push({
+      providerId,
+      label: providerId === "deepseek" ? "DeepSeek" : "Gemini",
+      hits: ownHits,
+      misses: ownMisses,
+      accuracy: ownScored > 0 ? (ownHits / ownScored) * 100 : 0,
+      text,
+    });
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -175,43 +210,81 @@ export async function buildWeeklyReview(
     flats,
     accuracy,
     perProvider,
-    diagnosis,
+    perAI,
     hasData: totalPredictions > 0,
   };
 }
 
-// ── AI failure-factor diagnosis ─────────────────────────────────────
-async function diagnoseMisses(misses: PredictionOutcome[]): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return "";
-
-  const lines = misses
-    .slice(0, 30) // cap prompt size; worst offenders first
+// ── Per-AI self-review ──────────────────────────────────────────────
+// Each provider reviews ITS OWN calls only, against the archived daily-brief
+// context, and must produce three sections: 得失 / 简报修改建议 / 优化方向.
+function buildSelfReviewPrompt(
+  label: string,
+  outcomes: PredictionOutcome[],
+  contextBlock: string,
+): string {
+  const lines = [...outcomes]
     .sort((a, b) => a.pctChange - b.pctChange)
+    .slice(0, 40)
     .map(
       (m) =>
-        `[${m.date}] ${m.ticker} (${m.providerId}) 预测:${m.action} 置信度:${m.confidence}% 预测价:${m.predPrice} → 一周后:${m.nowPrice} (${m.pctChange >= 0 ? "+" : ""}${m.pctChange.toFixed(1)}%)\n  当时的理由: ${m.reason.slice(0, 200)}`,
+        `[${m.date}] ${m.ticker} ${m.action} 置信度:${m.confidence}% 预测价:${m.predPrice} → 复盘时:${m.nowPrice} (${m.pctChange >= 0 ? "+" : ""}${m.pctChange.toFixed(1)}%) 结果:${m.result === "hit" ? "准" : "错"}\n  当时理由: ${m.reason.slice(0, 200)}`,
     )
     .join("\n");
 
-  const prompt = `你是量化策略复盘助手。以下是过去一周 AI 选股预测中判错的案例（预测了买入但一周后下跌 ≥3%，或预测观望但一周后上涨 ≥3%）。
+  return `你是${label}，一名短线选手（最长持仓 5 个交易日，周末不计）。下面是过去一周你自己（${label}）的每日预测复盘结果，以及当天的简报市场背景存档（情绪/资金/题材/热点/两仓操作）。
 
+〔你的预测结果〕
 ${lines}
 
-请输出 3-6 条简体中文要点，每条一行，格式「失败因素：分析＋一句优化建议」。要求：
-1. 归纳失败的共同模式（例如：追高超买、忽略大盘/板块系统性风险、消息面权重过高、置信度虚高、预测理由与价格行为矛盾等）；
-2. 基于案例的具体内容，不要空泛套话；
-3. 给出可执行的策略优化建议（例如：加 RSI 上限过滤、降低追涨型 BUY 的置信度权重、大盘急跌日暂停买入信号等）。`;
+〔每日简报背景存档〕
+${contextBlock || "（本周无存档，仅依据上面的案例复盘）"}
 
+请输出简体中文，必须分三段，用这三个小节标题：
+【本周得失】3-6 条：结合当天市场背景（情绪周期/资金/题材轮动）归纳你判准与判错的共同模式，说明为什么对、为什么错；
+【简报修改建议】2-4 条：每日简报里哪些数据对你判断没用或太吵、缺了哪些你会用到的数据，具体到栏目名，可操作；
+【后续优化方向】2-4 条：你自己下一步的判断改进点，要具体可执行（例如"涨停晋级率低于 40% 时不再给 BUY"这类规则化表述）。
+不要空泛套话，不要复述规则。`;
+}
+
+async function diagnoseProvider(
+  providerId: "deepseek" | "gemini",
+  outcomes: PredictionOutcome[],
+  contextBlock: string,
+): Promise<string> {
+  const label = providerId === "deepseek" ? "DeepSeek" : "Gemini";
+  const prompt = buildSelfReviewPrompt(label, outcomes, contextBlock);
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-    });
-    return (response.text ?? "").trim();
+    if (providerId === "gemini") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return "";
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+      });
+      return (response.text ?? "").trim();
+    }
+    // DeepSeek — same transport as the analysis stages (json_object mode), so
+    // wrap the review in a one-key JSON object and unwrap here.
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) return "";
+    const raw = await deepseekCall(
+      apiKey,
+      deepseekModel(),
+      `${prompt}\n\n输出必须是一个 JSON 对象：{"review": "你的完整三段复盘文本"}。review 内用【本周得失】等小节标题换行书写。`,
+      "weeklySelfReview",
+      {
+        type: "object",
+        properties: { review: { type: "string" } },
+        required: ["review"],
+      },
+      "review",
+    );
+    const parsed = JSON.parse(raw) as { review?: string };
+    return (parsed.review ?? "").trim();
   } catch (err) {
-    console.warn(`⚠ Weekly diagnosis failed: ${(err as Error).message}`);
+    console.warn(`⚠ Weekly self-review (${providerId}) failed: ${(err as Error).message}`);
     return "";
   }
 }

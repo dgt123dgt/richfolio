@@ -321,3 +321,27 @@ export function aggregateMultiAI(
 
   return aggregated;
 }
+
+// ── Per-provider book feeds ─────────────────────────────────────────
+// The dual paper-trading books (DeepSeek 仓 / Gemini 仓) each follow only
+// their own provider's votes. Rebuild a provider-private recommendation
+// list from the votes stored on the aggregated recs — providers never see
+// each other's calls.
+export function recsForProvider(
+  aiRecs: AIBuyRecommendation[],
+  providerId: string,
+): AIBuyRecommendation[] {
+  const out: AIBuyRecommendation[] = [];
+  for (const r of aiRecs) {
+    const vote = r.providers?.find((p) => p.providerId === providerId);
+    if (!vote) continue;
+    out.push({
+      ...r,
+      action: vote.action,
+      confidence: vote.confidence,
+      reason: vote.reason ?? r.reason,
+      suggestedBuyValue: vote.suggestedBuyValue ?? r.suggestedBuyValue,
+    });
+  }
+  return out;
+}

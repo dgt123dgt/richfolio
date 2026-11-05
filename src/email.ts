@@ -11,7 +11,7 @@ import type { LongTermLabel } from "./stockLabels.js";
 import type { MarketSentiment, ConceptScore, MarketPhase } from "./marketSentiment.js";
 import { escapeHtmlAttr, formatMoney } from "./util.js";
 import { hasStrongBuyVote } from "./aiAggregation.js";
-import type { PaperSummary } from "./paperTrading.js";
+import { BOOK_LABELS, type BookId, type PaperSummary } from "./paperTrading.js";
 
 const MONTHLY_CAPITAL_LABEL =
   (Number(process.env.PAPER_MONTHLY_CAPITAL ?? 20_000)).toLocaleString("en-US");
@@ -1258,7 +1258,7 @@ export async function sendBrief(
 export async function sendIntradayBrief(input: {
   sentiment: MarketSentiment | null;
   aiRecs: AIBuyRecommendation[];
-  paper: PaperSummary;
+  books: Array<{ id: BookId; paper: PaperSummary }>;
 }): Promise<void> {
   const now = new Date()
     .toLocaleTimeString("sv-SE", { timeZone: "Asia/Shanghai", hour12: false })
@@ -1272,15 +1272,18 @@ export async function sendIntradayBrief(input: {
     .filter((r) => r.action === "STRONG BUY" || r.action === "BUY")
     .slice(0, 5);
 
-  const paperRows = input.paper.holdings
-    .map(
-      (h) => `
+  const paperRows = input.books
+    .flatMap(({ id, paper }) =>
+      paper.holdings.map(
+        (h) => `
     <tr>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};font-size:10px;color:${S.muted};">${BOOK_LABELS[id] ?? id}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};font-weight:bold;color:#1a202c;">${h.name}<span style="font-size:9px;color:${S.muted};font-weight:normal;">　${h.ticker}</span></td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${h.shares} 股</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">¥${h.price.toFixed(2)}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${h.pnlPct >= 0 ? "#b91c1c" : "#15803d"};">${h.pnlPct >= 0 ? "+" : ""}${h.pnlPct.toFixed(2)}%</td>
     </tr>`,
+      ),
     )
     .join("");
 
@@ -1322,19 +1325,25 @@ export async function sendIntradayBrief(input: {
   }
 </td></tr>
 <tr><td style="padding:8px 24px 16px;background:${S.cardBg};">
-  <div style="font-size:13px;font-weight:bold;color:${S.blue};margin-bottom:6px;">模拟盘（本月 ${MONTHLY_CAPITAL_LABEL} 元）</div>
+  <div style="font-size:13px;font-weight:bold;color:${S.blue};margin-bottom:6px;">双 AI 模拟盘（各 ${MONTHLY_CAPITAL_LABEL} 元，互不影响）</div>
+  ${input.books
+    .map(({ id, paper }) => {
+      const label = BOOK_LABELS[id] ?? id;
+      return `
   <p style="margin:0 0 6px;font-size:12px;color:#1a202c;">
-    总资产 <b>¥${Math.round(input.paper.total).toLocaleString("en-US")}</b> · 仓位 <b>${input.paper.positionPct.toFixed(0)}%</b>（现金 ¥${Math.round(input.paper.cash).toLocaleString("en-US")}）
-    · 今日盈亏 <b style="color:${(input.paper.pnlDayPct ?? 0) >= 0 ? "#b91c1c" : "#15803d"};">${input.paper.pnlDayPct == null ? "—" : `${input.paper.pnlDayPct >= 0 ? "+" : ""}${input.paper.pnlDayPct.toFixed(2)}%`}</b>
-    · 本月 <b style="color:${input.paper.pnlMonth >= 0 ? "#b91c1c" : "#15803d"};">${input.paper.pnlMonth >= 0 ? "+" : ""}${input.paper.pnlMonth.toFixed(2)} 元（${input.paper.pnlMonthPct >= 0 ? "+" : ""}${input.paper.pnlMonthPct.toFixed(2)}%）</b>
-  </p>
+    <b>${label}仓</b> · 总资产 <b>¥${Math.round(paper.total).toLocaleString("en-US")}</b> · 仓位 <b>${paper.positionPct.toFixed(0)}%</b>（现金 ¥${Math.round(paper.cash).toLocaleString("en-US")}）
+    · 今日盈亏 <b style="color:${(paper.pnlDayPct ?? 0) >= 0 ? "#b91c1c" : "#15803d"};">${paper.pnlDayPct == null ? "—" : `${paper.pnlDayPct >= 0 ? "+" : ""}${paper.pnlDayPct.toFixed(2)}%`}</b>
+    · 本月 <b style="color:${paper.pnlMonth >= 0 ? "#b91c1c" : "#15803d"};">${paper.pnlMonth >= 0 ? "+" : ""}${paper.pnlMonth.toFixed(2)} 元（${paper.pnlMonthPct >= 0 ? "+" : ""}${paper.pnlMonthPct.toFixed(2)}%）</b>
+  </p>`;
+    })
+    .join("")}
   ${
     paperRows
       ? `<table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
-    <tr style="color:${S.muted};font-size:10px;"><td style="padding:4px 3px;border-bottom:1px solid ${S.border};">持仓</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">股数</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">浮盈</td></tr>
+    <tr style="color:${S.muted};font-size:10px;"><td style="padding:4px 3px;border-bottom:1px solid ${S.border};">仓</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};">持仓</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">股数</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">浮盈</td></tr>
     ${paperRows}
   </table>`
-      : `<p style="margin:0;font-size:12px;color:${S.muted};">当前空仓。</p>`
+      : `<p style="margin:0;font-size:12px;color:${S.muted};">两仓当前均空仓。</p>`
   }
 </td></tr>
 </table>
@@ -1344,7 +1353,7 @@ export async function sendIntradayBrief(input: {
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",
     to: recipientEmail,
-    subject: `Richfolio 盘中快报 ${now} — 大盘${s?.phase ?? "数据缺失"}｜模拟仓 ${input.paper.positionPct.toFixed(0)}%`,
+    subject: `Richfolio 盘中快报 ${now} — 大盘${s?.phase ?? "数据缺失"}｜DS仓 ${input.books[0]?.paper.positionPct.toFixed(0) ?? 0}% / GM仓 ${input.books[1]?.paper.positionPct.toFixed(0) ?? 0}%`,
     html,
   });
 
