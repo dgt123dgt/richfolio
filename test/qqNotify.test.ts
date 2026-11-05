@@ -55,35 +55,63 @@ const rec = (overrides: Partial<AIBuyRecommendation>): AIBuyRecommendation =>
   }) as AIBuyRecommendation;
 
 describe("buildBriefDigest", () => {
-  it("renders sentiment, ladder, themes, buys and portfolio into plain text", () => {
+  it("renders full sections: sentiment, funds, themes, news, buys, portfolio", () => {
     const text = buildBriefDigest({
-      report: { totalCurrentValue: 100000 },
-      aiRecs: [rec({})],
-      sentiment: sentiment(),
+      report: { totalCurrentValue: 100000, items: [{}] as never[] },
+      aiRecs: [rec({ reason: "放量突破平台，题材主线地位明确，回踩均线可分批建仓" })],
+      sentiment: sentiment({
+        funds: {
+          totalAmount: 21000,
+          amountChangePct: 3.2,
+          amountVs5dAvgPct: 12,
+          volumeState: "放量",
+          mainNet: 39,
+          inflowSectors: [{ name: "电力设备", net: 63 }],
+          outflowSectors: [{ name: "元件", net: -67 }],
+          comment: "增量资金助推，情绪看高一线",
+        },
+      }),
+      hotNews: [
+        { title: "央行宣布降准0.5个百分点", publishedAt: "2026-11-05T09:00:00", source: "x", url: "" } as NewsItem,
+      ],
       date: new Date("2026-11-05T16:00:00"),
     });
     assert.ok(text.includes("【Richfolio 每日简报】11/5"));
-    assert.ok(text.includes("情绪:分歧(3/6) 涨停84家"));
-    assert.ok(text.includes("仓位:20%–30%"));
+    assert.ok(text.includes("〔市场情绪〕"));
+    assert.ok(text.includes("周期:分歧(命中3/6)｜涨停84家"));
+    assert.ok(text.includes("仓位建议:20%–30%"));
     assert.ok(text.includes("梯队:4板×2"));
-    assert.ok(text.includes("闽发铝业"));
-    assert.ok(text.includes("题材:光伏概念[主升]20家 主力+33.1亿 龙头闽发铝业4板"));
-    assert.ok(text.includes("▪确认主升"));
-    assert.ok(text.includes("AI推荐:"), "AI rec line present");
-    assert.ok(text.includes("★(77%)"), "STRONG BUY star + confidence");
-    assert.ok(text.includes("持仓:"));
+    assert.ok(text.includes("空间板:闽发铝业（4板·工业金属）"));
+    assert.ok(text.includes("主线龙头：闽发铝业"));
+    assert.ok(text.includes("〔资金面〕"));
+    assert.ok(text.includes("两市成交21000亿"));
+    assert.ok(text.includes("主力净流入 +39亿"));
+    assert.ok(text.includes("流入:电力设备+63亿"));
+    assert.ok(text.includes("流出:元件-67亿"));
+    assert.ok(text.includes("〔热门题材〕"));
+    assert.ok(text.includes("1.光伏概念[主升] 涨停20家 最高4板"));
+    assert.ok(text.includes("谁在买:超大单主导"));
+    assert.ok(text.includes("▪明日:确认主升"));
+    assert.ok(text.includes("〔市场热点〕"));
+    assert.ok(text.includes("央行宣布降准"), "headline present");
+    assert.ok(text.includes("利好"), "impact phrase present");
+    assert.ok(text.includes("〔AI 推荐〕"));
+    assert.ok(text.includes("★") && text.includes("(77%)"), "STRONG BUY star + confidence");
+    assert.ok(text.includes("理由:放量突破平台"));
+    assert.ok(text.includes("〔持仓〕"));
+    assert.ok(text.includes("（1 只标的）"));
   });
 
   it("still renders a usable digest without sentiment data", () => {
     const text = buildBriefDigest({
-      report: { totalCurrentValue: 50000 },
+      report: { totalCurrentValue: 50000, items: [] },
       aiRecs: [],
       sentiment: null,
       date: new Date("2026-11-05T16:00:00"),
     });
     assert.ok(text.includes("【Richfolio 每日简报】11/5"));
-    assert.ok(text.includes("持仓:"));
-    assert.ok(!text.includes("情绪:"));
+    assert.ok(text.includes("〔持仓〕"));
+    assert.ok(!text.includes("〔市场情绪〕"));
   });
 });
 

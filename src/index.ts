@@ -585,7 +585,7 @@ try {
     // QQ 官方机器人第二通道 — enabled only when QQ_BOT_APPID/SECRET/OPENID are
     // all set; best-effort, the email above stays the authoritative delivery.
     try {
-      const qqOk = await sendQQDigest({ report, aiRecs, sentiment });
+      const qqOk = await sendQQDigest({ report, aiRecs, sentiment, hotNews });
       if (qqOk) console.log("QQ digest pushed");
     } catch (err) {
       console.warn(`⚠ QQ push failed (email unaffected): ${(err as Error).message}`);

@@ -4,7 +4,7 @@ import { sendQQDigest } from "../src/qqNotify.js";
 // One-shot QQ push test — verifies credentials + openid with a tiny message.
 // Safe to run anytime; deletes itself from the flow after the channel is live.
 const ok = await sendQQDigest({
-  report: { totalCurrentValue: 0 },
+  report: { totalCurrentValue: 0, items: [] },
   aiRecs: [],
   sentiment: null,
   date: new Date(),
