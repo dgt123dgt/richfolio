@@ -6,6 +6,7 @@ import { buildEmailHtml } from "../src/email.js";
 // ranking, so the bold text on every card is the Chinese name. Populate the
 // same way here, otherwise display names fall back to the raw symbol.
 import { runtimeTickerNames } from "../src/config.js";
+import { computeLongTermLabels } from "../src/stockLabels.js";
 import type { BoardInfo } from "../src/fetchBoards.js";
 import type { AIBuyRecommendation } from "../src/providers/types.js";
 import type { TechnicalData } from "../src/technicals.js";
@@ -182,6 +183,12 @@ const boards: Record<string, BoardInfo> = {
   "601318.SS": { industry: "保险Ⅱ", region: "广东板块", concepts: ["参股银行", "沪股通", "富时罗素概念"] },
 };
 
+// Long-term 底色 labels — same rules the live run caches into the DB.
+const longTermLabels: Record<string, string[]> = {};
+for (const t of Object.keys(priceData)) {
+  longTermLabels[t] = computeLongTermLabels(priceData[t], boards[t]);
+}
+
 const html = buildEmailHtml(
   report,
   news,
@@ -192,6 +199,7 @@ const html = buildEmailHtml(
   hotNews,
   new Set(["601398.SS"]),
   boards,
+  longTermLabels,
 );
 
 writeFileSync("smoke/email-preview.html", html, "utf8");

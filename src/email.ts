@@ -7,6 +7,7 @@ import type { TechnicalData } from "./fetchTechnicals.js";
 import type { QuoteData } from "./fetchPrices.js";
 import type { BoardInfo } from "./fetchBoards.js";
 import { classifyHotNewsImpact } from "./hotNewsImpact.js";
+import type { LongTermLabel } from "./stockLabels.js";
 import { escapeHtmlAttr, formatMoney } from "./util.js";
 import { hasStrongBuyVote } from "./aiAggregation.js";
 
@@ -277,10 +278,11 @@ function buildAISection(
   technicals: Record<string, TechnicalData> = {},
   priceData: Record<string, QuoteData> = {},
   nationalTeam: ReadonlySet<string> = new Set(),
+  longTermLabels: Record<string, string[]> = {},
 ): string {
   // Global status chips next to every stock name in this section.
   const chipsFor = (ticker: string) =>
-    renderChips(stockChips(ticker, { technicals, priceData, nationalTeam }));
+    renderChips(stockChips(ticker, { technicals, priceData, nationalTeam, longTermLabels }));
   // Portfolio tickers (excludes watch list)
   const portfolioRecs = aiRecs.filter((r) => !r.isWatching);
   const actionable = portfolioRecs.filter((r) => r.action === "STRONG BUY" || r.action === "BUY");
@@ -475,6 +477,7 @@ export function buildEmailHtml(
   hotNews: NewsItem[] = [],
   nationalTeam: ReadonlySet<string> = new Set(),
   boards: Record<string, BoardInfo> = {},
+  longTermLabels: Record<string, string[]> = {},
 ): string {
   const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
@@ -518,11 +521,11 @@ export function buildEmailHtml(
   // Use AI section if available, otherwise fallback to gap-based
   const buysSection =
     aiRecs.length > 0
-      ? buildAISection(aiRecs, technicals, priceData, nationalTeam)
+      ? buildAISection(aiRecs, technicals, priceData, nationalTeam, longTermLabels)
       : buildFallbackBuysSection(report);
   // Same global chips for the news headers.
   const chipsFor = (ticker: string) =>
-    renderChips(stockChips(ticker, { technicals, priceData, nationalTeam }));
+    renderChips(stockChips(ticker, { technicals, priceData, nationalTeam, longTermLabels }));
 
   // Watch-only mode (no portfolio configured): the 100-stock technical screen
   // carries the whole brief, so it is rendered at the very end — after the AI
@@ -530,7 +533,7 @@ export function buildEmailHtml(
   const hasPortfolio = report.items.length > 0;
   const techScreenBlock = hasPortfolio
     ? ""
-    : techScreenSection(technicals, priceData, nationalTeam, boards);
+    : techScreenSection(technicals, priceData, nationalTeam, boards, longTermLabels);
   const statsSection = hasPortfolio
     ? `
 <!-- Portfolio Stats -->
@@ -767,6 +770,19 @@ const CHIP_NATIONAL_TEAM: Omit<StatusChip, "text"> = {
   priority: 2,
 };
 
+// ── Long-term 底色 labels (from the half-year stock-label DB) ────────
+// They describe what a stock IS, never what it did today, so they never win
+// the row tint (priority 1) — daily states and 老龙头/国家队 outrank them.
+const LONG_TERM_CHIPS: Record<string, Omit<StatusChip, "text">> = {
+  白马: { bg: "#fef3c7", fg: "#b45309", rowBg: "#fffbeb", priority: 1 },
+  成长: { bg: "#dbeafe", fg: "#1d4ed8", rowBg: "#eff6ff", priority: 1 },
+  价值: { bg: "#e0e7ff", fg: "#4338ca", rowBg: "#eef2ff", priority: 1 },
+  周期: { bg: "#ffedd5", fg: "#c2410c", rowBg: "#fff7ed", priority: 1 },
+  防御: { bg: "#d1fae5", fg: "#065f46", rowBg: "#ecfdf5", priority: 1 },
+  绩差: { bg: "#fee2e2", fg: "#991b1b", rowBg: "#fef2f2", priority: 2 },
+  僵尸冷门: { bg: "#f1f5f9", fg: "#475569", rowBg: "#f8fafc", priority: 1 },
+};
+
 /**
  * 白马股 heuristic — big, consistently profitable, sanely valued. Deliberately
  * loose: it only labels a row, it never gates a recommendation.
@@ -784,6 +800,7 @@ function statusChips(
   t: TechnicalData,
   q: QuoteData | undefined,
   nationalTeam: ReadonlySet<string>,
+  longTerm: ReadonlyArray<string> = [],
 ): StatusChip[] {
   const chips: StatusChip[] = [];
   const chg = t.priceChange1d;
@@ -806,7 +823,14 @@ function statusChips(
   if (nationalTeam.has(ticker)) {
     chips.push({ ...CHIP_NATIONAL_TEAM, text: "国家队" });
   }
-  if (isWhiteHorse(q)) {
+  if (longTerm.length > 0) {
+    // DB-sourced long-term labels win; the ad-hoc 白马 heuristic stays only as
+    // a fallback for call sites that have no label DB (tests, edge paths).
+    for (const label of longTerm) {
+      const chip = LONG_TERM_CHIPS[label];
+      if (chip) chips.push({ ...chip, text: label });
+    }
+  } else if (isWhiteHorse(q)) {
     chips.push({ ...CHIP_WHITE_HORSE, text: "白马" });
   }
   return chips;
@@ -819,12 +843,13 @@ interface ChipContext {
   technicals: Record<string, TechnicalData>;
   priceData: Record<string, QuoteData>;
   nationalTeam: ReadonlySet<string>;
+  longTermLabels?: Record<string, string[]>;
 }
 
 function stockChips(ticker: string, ctx: ChipContext): StatusChip[] {
   const t = ctx.technicals[ticker];
   if (!t) return [];
-  return statusChips(ticker, t, ctx.priceData[ticker], ctx.nationalTeam);
+  return statusChips(ticker, t, ctx.priceData[ticker], ctx.nationalTeam, ctx.longTermLabels?.[ticker] ?? []);
 }
 
 function renderChips(chips: StatusChip[], fontSize = "9px"): string {
@@ -841,16 +866,37 @@ function techScreenSection(
   priceData: Record<string, QuoteData>,
   nationalTeam: ReadonlySet<string> = new Set(),
   boards: Record<string, BoardInfo> = {},
+  longTermLabels: Record<string, string[]> = {},
 ): string {
   const entries = Object.entries(technicals);
   if (entries.length === 0) return "";
+
+  // Same-industry peers (from board info) — used to tell 连板龙头 from 妖股:
+  // a sector leader drags its peers up with it; a 妖股 detaches from them.
+  const recentGainByTicker = new Map(
+    entries.map(([tk, td]) => [tk, td.recentGain5d ?? 0] as const),
+  );
+  const industryByTicker = new Map(
+    entries.map(([tk]) => [tk, boards[tk]?.industry ?? ""] as const),
+  );
+  const isSectorLeader = (ticker: string): boolean => {
+    const ind = industryByTicker.get(ticker) ?? "";
+    if (!ind) return false;
+    const my = recentGainByTicker.get(ticker) ?? 0;
+    return entries.every(
+      ([tk]) =>
+        industryByTicker.get(tk) !== ind ||
+        tk === ticker ||
+        (recentGainByTicker.get(tk) ?? 0) <= my,
+    );
+  };
 
   const rows = entries
     .map(([ticker, t]) => {
       const quote = priceData[ticker];
       const price = quote?.price;
       const chg = t.priceChange1d;
-      const chips = statusChips(ticker, t, quote, nationalTeam);
+      const chips = statusChips(ticker, t, quote, nationalTeam, longTermLabels[ticker] ?? []);
       // Row tint follows the most significant chip: 连板 > 涨停 > 跌停 > 白马.
       const accent = chips.reduce<StatusChip | null>(
         (best, c) => (best == null || c.priority > best.priority ? c : best),
@@ -881,7 +927,8 @@ function techScreenSection(
       //   密切关注 — two or more bullish signals line up and none contradict;
       //   可关注   — exactly one bullish signal (or mixed, one each side);
       //   无需关注 — nothing bullish, or several bearish signals stacked.
-      // Daily limit states keep their dedicated "don't chase" verdicts.
+      // A short-term 盘面形态 prefix (妖股/超跌反弹/趋势中军/…) is prepended,
+      // mirroring the classic retail taxonomy — these are session-level states.
       const bullish =
         (t.goldenCross ? 1 : 0) +
         (t.macdCrossover === "bullish" ? 1 : 0) +
@@ -894,18 +941,41 @@ function techScreenSection(
 
       const atLimitUp = chg != null && chg >= LIMIT_CHANGE_THRESHOLD;
       const atLimitDown = chg != null && chg <= -LIMIT_CHANGE_THRESHOLD;
+      const vsSma50 = t.priceVsSma50;
+      const vsSma200 = t.priceVsSma200;
+      const vol = t.volumeLatest1d;
+
+      // Short-term form from daily bars/量能 only (no intraday/tape data —
+      // 庄股/情绪股/跟风 need evidence daily bars cannot prove, so they are
+      // left unlabelled rather than guessed).
+      const shortType = (() => {
+        if (t.consecutiveLimitUps >= 2) return isSectorLeader(ticker) ? "连板龙头" : "妖股";
+        if (atLimitUp) return "涨停";
+        if (atLimitDown) return "跌停";
+        // 主跌之后拉起：放量修复=超跌反弹；缩量自救=反抽（重点避坑）。
+        if ((vsSma200 ?? 0) < 0 && (t.recentGain5d ?? 0) >= 5 && (vol ?? 0) >= 1.5) return "超跌反弹";
+        if ((vsSma200 ?? 0) < 0 && (vsSma50 ?? 0) < 0 && (chg ?? 0) > 0 && (vol ?? 1) < 1) return "反抽";
+        // 消息日爆量急涨、脱离基本面节奏 → 题材脉冲。
+        if ((chg ?? 0) >= 4.5 && (vol ?? 0) >= 2 && (boards[ticker]?.concepts?.length ?? 0) > 0) return "题材脉冲";
+        // 沿均线稳步上行、进二退一 → 趋势中军（5日涨幅过大说明已加速）。
+        if ((vsSma50 ?? 0) > 0 && (vsSma200 ?? 0) > 0 && (t.recentGain5d ?? 0) < 15) return "趋势中军";
+        // 长期在均线附近窄幅来回 → 箱体波段。
+        if (vsSma200 != null && Math.abs(vsSma200) <= 5 && t.rsi14 != null && t.rsi14 >= 40 && t.rsi14 <= 65) return "箱体波段";
+        return null;
+      })();
+
+      const tier = (() => {
+        if (t.consecutiveLimitUps >= 2 || atLimitUp) return { text: "勿追", bg: t.consecutiveLimitUps >= 2 ? "#ede9fe" : "#fee2e2", fg: t.consecutiveLimitUps >= 2 ? "#6d28d9" : "#b91c1c" };
+        if (atLimitDown) return { text: "勿接", bg: "#dcfce7", fg: "#15803d" };
+        if (bearish >= 2 || bullish === 0) return { text: "无需关注", bg: "#f1f5f9", fg: "#64748b" };
+        if (bullish >= 2) return { text: "密切关注", bg: "#dcfce7", fg: "#15803d" };
+        return { text: "可关注", bg: "#fef9c3", fg: "#a16207" };
+      })();
+      // 反抽 overrides the tier — by definition it is a trap to avoid.
       const verdict: { text: string; bg: string; fg: string } =
-        t.consecutiveLimitUps >= 2
-          ? { text: "妖股·勿追", bg: "#ede9fe", fg: "#6d28d9" }
-          : atLimitUp
-            ? { text: "涨停·勿追", bg: "#fee2e2", fg: "#b91c1c" }
-            : atLimitDown
-              ? { text: "跌停·勿接", bg: "#dcfce7", fg: "#15803d" }
-              : bearish >= 2 || bullish === 0
-                ? { text: "无需关注", bg: "#f1f5f9", fg: "#64748b" }
-                : bullish >= 2
-                  ? { text: "密切关注", bg: "#dcfce7", fg: "#15803d" }
-                  : { text: "可关注", bg: "#fef9c3", fg: "#a16207" };
+        shortType === "反抽"
+          ? { text: "反抽·回避", bg: "#fee2e2", fg: "#b91c1c" }
+          : { text: shortType ? `${shortType}·${tier.text}` : tier.text, bg: tier.bg, fg: tier.fg };
 
       const board = boards[ticker];
       const boardLine1 = board
@@ -952,6 +1022,9 @@ function techScreenSection(
     <span style="display:inline-block;background:#fef9c3;color:#a16207;font-weight:bold;padding:1px 6px;border-radius:10px;">可关注</span> 单项利好 ·
     <span style="display:inline-block;background:#f1f5f9;color:#64748b;font-weight:bold;padding:1px 6px;border-radius:10px;">无需关注</span> 无信号或多项利空叠加
   </p>
+  <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">
+    形态前缀（短期盘面状态，随行情切换）：妖股 / 连板龙头 · 涨停 · 跌停 · 超跌反弹（放量修复） · 反抽（缩量自救，回避） · 题材脉冲 · 趋势中军 · 箱体波段；前缀后接分级，如「趋势中军·可关注」。
+  </p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:11px;">
@@ -980,6 +1053,7 @@ export async function sendBrief(
   hotNews: NewsItem[] = [],
   nationalTeam: ReadonlySet<string> = new Set(),
   boards: Record<string, BoardInfo> = {},
+  longTermLabels: Record<string, string[]> = {},
 ): Promise<void> {
   const html = buildEmailHtml(
     report,
@@ -991,6 +1065,7 @@ export async function sendBrief(
     hotNews,
     nationalTeam,
     boards,
+    longTermLabels,
   );
 
   const { error } = await resend.emails.send({

@@ -102,8 +102,9 @@ function render(
   priceData: Record<string, QuoteData>,
   nationalTeam: ReadonlySet<string> = new Set(),
   boards: Record<string, BoardInfo> = {},
+  longTermLabels: Record<string, string[]> = {},
 ): string {
-  return buildEmailHtml(report, {}, [], technicals, priceData, [], hotNews, nationalTeam, boards);
+  return buildEmailHtml(report, {}, [], technicals, priceData, [], hotNews, nationalTeam, boards, longTermLabels);
 }
 
 describe("hot-stock technical screen", () => {
@@ -233,6 +234,63 @@ describe("hot-stock technical screen", () => {
     );
     assert.ok(html.includes("密切关注"), "tiered verdict present");
     assert.ok(html.includes("#dcfce7"), "green pill applied");
+  });
+
+  it("prefixes the tier with the short-term form (趋势中军·可关注)", () => {
+    const html = render(
+      { "600519.SS": tech({ ticker: "600519.SS", priceChange1d: 1.5, recentGain5d: 3 }) },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+    );
+    assert.ok(html.includes("趋势中军·可关注"), "form·tier format");
+  });
+
+  it("tags a heavy-bounce oversold name as 超跌反弹", () => {
+    const html = render(
+      {
+        "600519.SS": tech({
+          ticker: "600519.SS",
+          goldenCross: false,
+          priceVsSma50: -6,
+          priceVsSma200: -10,
+          recentGain5d: 8,
+          volumeLatest1d: 2,
+          priceChange1d: 3,
+          rsi14: 45,
+        }),
+      },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+    );
+    assert.ok(html.includes("超跌反弹·可关注"));
+  });
+
+  it("flags a low-volume dead-cat bounce as 反抽·回避", () => {
+    const html = render(
+      {
+        "600519.SS": tech({
+          ticker: "600519.SS",
+          goldenCross: false,
+          priceVsSma50: -6,
+          priceVsSma200: -10,
+          recentGain5d: 1,
+          volumeLatest1d: 0.6,
+          priceChange1d: 2,
+        }),
+      },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+    );
+    assert.ok(html.includes("反抽·回避"));
+  });
+
+  it("shows long-term 底色 chips from the label DB", () => {
+    const html = render(
+      { "600519.SS": tech({ ticker: "600519.SS", priceChange1d: 1.5 }) },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+      new Set(),
+      {},
+      { "600519.SS": ["周期", "价值"] },
+    );
+    assert.ok(html.includes(">周期<"), "周期 chip rendered");
+    assert.ok(html.includes(">价值<"), "价值 chip rendered");
   });
 
   it("downgrades to 无需关注 when bearish signals stack up", () => {

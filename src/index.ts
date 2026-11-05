@@ -19,6 +19,7 @@ import { fetchTechnicals } from "./fetchTechnicals.js";
 import { fetchNews, fetchMarketHotNews } from "./fetchNews.js";
 import { fetchNationalTeamFlags } from "./fetchHolderFlags.js";
 import { fetchStockBoards } from "./fetchBoards.js";
+import { getLongTermLabels } from "./stockLabels.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -570,7 +571,10 @@ try {
       });
     }
 
-    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards);
+    // Long-term 底色 labels from the half-year DB (state/stock-labels.json) —
+    // a new ticker is looked up once, cached, reused until expiry.
+    const longTermLabels = getLongTermLabels(tickers, prices, boards);
+    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards, longTermLabels);
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);
     } catch (err) {
