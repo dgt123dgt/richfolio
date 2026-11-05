@@ -991,9 +991,7 @@ ${
     : ""
 }
 ${s.relayHint ? `<tr><td style="padding:6px 24px 0;background:${S.cardBg};"><p style="margin:0;font-size:11px;color:${S.blue};">${s.relayHint}</p></td></tr>` : ""}
-<tr><td style="padding:4px 24px 12px;background:${S.cardBg};border-bottom:1px solid ${S.border};">
-  <p style="margin:0;font-size:10px;color:${S.muted};">阈值是经验区间、需连续两日共振确认；情绪周期 ≠ 指数涨跌，仅供仓位参考，不是买卖公式。</p>
-</td></tr>`;
+<tr><td style="height:12px;background:${S.cardBg};border-bottom:1px solid ${S.border};"></td></tr>`;
 }
 
 function techScreenSection(
