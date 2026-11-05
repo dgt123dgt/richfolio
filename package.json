@@ -7,6 +7,7 @@
     "start": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts",
     "dev": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts",
     "weekly": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --weekly",
+    "monthly": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --monthly",
     "intraday": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --intraday",
     "refresh": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --refresh",
     "crypto": "cross-env NODE_USE_ENV_PROXY=1 tsx --env-file-if-exists=.env src/index.ts --crypto",

@@ -12,13 +12,11 @@
 //   观望/减持:     week move ≤ −3% → hit (避坑); ≥ +3% → miss (踏空); else flat
 //   持有:          not scored (neutral by definition)
 
-import { GoogleGenAI } from "@google/genai";
-import { GEMINI_MODEL } from "./providers/gemini.js";
-import { deepseekCall, deepseekModel } from "./providers/deepseek.js";
 import { loadReasoningHistory } from "./state.js";
 import { fetchPrices } from "./fetchPrices.js";
 import { defaultCurrency } from "./config.js";
 import { loadBriefArchives, archiveContextBlock } from "./briefArchive.js";
+import { askProviderText, REVIEW_PROVIDER_LABELS, type ReviewProviderId } from "./aiText.js";
 
 export interface PredictionOutcome {
   date: string;
@@ -248,43 +246,10 @@ ${contextBlock || "（本周无存档，仅依据上面的案例复盘）"}
 }
 
 async function diagnoseProvider(
-  providerId: "deepseek" | "gemini",
+  providerId: ReviewProviderId,
   outcomes: PredictionOutcome[],
   contextBlock: string,
 ): Promise<string> {
-  const label = providerId === "deepseek" ? "DeepSeek" : "Gemini";
-  const prompt = buildSelfReviewPrompt(label, outcomes, contextBlock);
-  try {
-    if (providerId === "gemini") {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return "";
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-      });
-      return (response.text ?? "").trim();
-    }
-    // DeepSeek — same transport as the analysis stages (json_object mode), so
-    // wrap the review in a one-key JSON object and unwrap here.
-    const apiKey = process.env.DEEPSEEK_API_KEY;
-    if (!apiKey) return "";
-    const raw = await deepseekCall(
-      apiKey,
-      deepseekModel(),
-      `${prompt}\n\n输出必须是一个 JSON 对象：{"review": "你的完整三段复盘文本"}。review 内用【本周得失】等小节标题换行书写。`,
-      "weeklySelfReview",
-      {
-        type: "object",
-        properties: { review: { type: "string" } },
-        required: ["review"],
-      },
-      "review",
-    );
-    const parsed = JSON.parse(raw) as { review?: string };
-    return (parsed.review ?? "").trim();
-  } catch (err) {
-    console.warn(`⚠ Weekly self-review (${providerId}) failed: ${(err as Error).message}`);
-    return "";
-  }
+  const prompt = buildSelfReviewPrompt(REVIEW_PROVIDER_LABELS[providerId], outcomes, contextBlock);
+  return askProviderText(providerId, prompt);
 }

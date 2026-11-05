@@ -268,6 +268,76 @@ function isAshare(ticker: string): boolean {
   return /\.(SS|SZ)$/i.test(ticker);
 }
 
+// ── Sell-side decisions (shared by evening fill & intraday flatten) ─
+
+/**
+ * 退潮 forced flat → 5-trading-day cap → AI TRIM. Appends executed SELLs to
+ * `trades` and returns the tickers sold (buy side may not re-buy them).
+ * `sessionTag` marks the reason so intraday fills are distinguishable in the
+ * trade log ("" for the 22:00 close fill).
+ */
+function runSellSide(
+  db: DatabaseSync,
+  date: string,
+  input: {
+    prices: Record<string, number>;
+    aiRecs: AIBuyRecommendation[];
+    sentiment: MarketSentiment | null;
+  },
+  trades: ExecutedTrade[],
+  sessionTag: string,
+): Set<string> {
+  const positions = () =>
+    db.prepare("SELECT * FROM positions").all() as Array<{
+      ticker: string; name: string; shares: number; avg_cost: number; entry_date: string | null;
+    }>;
+  const price = (t: string): number | undefined => input.prices[t];
+  const soldToday = new Set<string>();
+
+  const targetPct = input.sentiment?.phase === "退潮" ? 0 : parseTargetPositionPct(input.sentiment?.positionHint ?? null);
+  if (targetPct === 0 && positions().length > 0) {
+    trades.push(...closeAllPositions(db, date, input.prices, `退潮期清仓（情绪建议仓位≈0%）${sessionTag}`.trimEnd()));
+    for (const t of trades) soldToday.add(t.ticker);
+    return soldToday;
+  }
+
+  for (const p of positions()) {
+    // 短线纪律：持仓超过 5 个交易日（周末不计）强制卖出，AI 说了也不算。
+    const heldDays = tradingDaysBetween(p.entry_date, date);
+    if (heldDays > MAX_HOLD_TRADING_DAYS) {
+      const px = price(p.ticker);
+      if (px != null) {
+        db.prepare("DELETE FROM positions WHERE ticker = ?").run(p.ticker);
+        const amount = p.shares * px;
+        db.prepare("UPDATE account SET cash = cash + ? WHERE id = 1").run(amount);
+        db.prepare(
+          "INSERT INTO trades (trade_date, ts, ticker, name, action, shares, price, amount, reason) VALUES (?,?,?,?,?,?,?,?,?)",
+        ).run(date, new Date().toISOString(), p.ticker, p.name, "SELL", p.shares, px, amount, `持仓满${MAX_HOLD_TRADING_DAYS}个交易日强制卖出（短线纪律）${sessionTag}`.trimEnd());
+        trades.push({ action: "SELL", ticker: p.ticker, name: p.name, shares: p.shares, price: px, amount, reason: `持仓满${MAX_HOLD_TRADING_DAYS}个交易日强制卖出` });
+        soldToday.add(p.ticker);
+        continue;
+      }
+    }
+    const rec = input.aiRecs.find((r) => r.ticker === p.ticker);
+    if (rec?.action !== "TRIM") continue;
+    const px = price(p.ticker);
+    if (px == null) continue;
+    const sellShares = Math.max(Math.floor(p.shares / 2 / LOT) * LOT, 0) || Math.min(p.shares, LOT);
+    const amount = sellShares * px;
+    db.prepare("UPDATE positions SET shares = shares - ?, updated_at = ? WHERE ticker = ?").run(
+      sellShares, new Date().toISOString(), p.ticker,
+    );
+    if (p.shares - sellShares <= 0) db.prepare("DELETE FROM positions WHERE ticker = ?").run(p.ticker);
+    db.prepare("UPDATE account SET cash = cash + ? WHERE id = 1").run(amount);
+    db.prepare(
+      "INSERT INTO trades (trade_date, ts, ticker, name, action, shares, price, amount, reason, confidence) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    ).run(date, new Date().toISOString(), p.ticker, p.name, "SELL", sellShares, px, amount, `AI 建议 TRIM（${rec.confidence}%）${sessionTag}`.trimEnd(), rec.confidence);
+    trades.push({ action: "SELL", ticker: p.ticker, name: p.name, shares: sellShares, price: px, amount, reason: `AI TRIM (${rec.confidence}%)` });
+    soldToday.add(p.ticker);
+  }
+  return soldToday;
+}
+
 // ── Core: execute the day's AI calls ────────────────────────────────
 
 /**
@@ -325,50 +395,10 @@ export function executeDailyTrades(
     positions().reduce((sum, p) => sum + (price(p.ticker) != null ? p.shares * price(p.ticker)! : p.avg_cost * p.shares), 0);
   const totalAssets = () => cash() + marketValue();
 
-  // Tickers sold earlier in this run may not be re-bought the same day —
-  // sell-then-rebuy would churn the book against a stale signal set.
-  const soldToday = new Set<string>();
-
   // ── SELL side: forced flat in 退潮, stale positions past the 5-trading-day
-  //    cap, then AI TRIM halves ─────────────────────────────────────────
-  if (targetPct === 0 && positions().length > 0) {
-    trades.push(...closeAllPositions(db, date, input.prices, `退潮期清仓（情绪建议仓位≈0%）`));
-    for (const t of trades) soldToday.add(t.ticker);
-  } else {
-    for (const p of positions()) {
-      // 短线纪律：持仓超过 5 个交易日（周末不计）强制卖出，AI 说了也不算。
-      const heldDays = tradingDaysBetween(p.entry_date, date);
-      if (heldDays > MAX_HOLD_TRADING_DAYS) {
-        const px = price(p.ticker);
-        if (px != null) {
-          db.prepare("DELETE FROM positions WHERE ticker = ?").run(p.ticker);
-          const amount = p.shares * px;
-          db.prepare("UPDATE account SET cash = cash + ? WHERE id = 1").run(amount);
-          db.prepare(
-            "INSERT INTO trades (trade_date, ts, ticker, name, action, shares, price, amount, reason) VALUES (?,?,?,?,?,?,?,?,?)",
-          ).run(date, new Date().toISOString(), p.ticker, p.name, "SELL", p.shares, px, amount, `持仓满${MAX_HOLD_TRADING_DAYS}个交易日强制卖出（短线纪律）`);
-          trades.push({ action: "SELL", ticker: p.ticker, name: p.name, shares: p.shares, price: px, amount, reason: `持仓满${MAX_HOLD_TRADING_DAYS}个交易日强制卖出` });
-          soldToday.add(p.ticker);
-          continue;
-        }
-      }
-      const rec = input.aiRecs.find((r) => r.ticker === p.ticker);
-      if (rec?.action !== "TRIM") continue;
-      const px = price(p.ticker);
-      if (px == null) continue;
-      const sellShares = Math.max(Math.floor(p.shares / 2 / LOT) * LOT, 0) || Math.min(p.shares, LOT);
-      const amount = sellShares * px;
-      db.prepare("UPDATE positions SET shares = shares - ?, updated_at = ? WHERE ticker = ?").run(
-        sellShares, new Date().toISOString(), p.ticker,
-      );
-      if (p.shares - sellShares <= 0) db.prepare("DELETE FROM positions WHERE ticker = ?").run(p.ticker);
-      db.prepare("UPDATE account SET cash = cash + ? WHERE id = 1").run(amount);
-      db.prepare(
-        "INSERT INTO trades (trade_date, ts, ticker, name, action, shares, price, amount, reason, confidence) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      ).run(date, new Date().toISOString(), p.ticker, p.name, "SELL", sellShares, px, amount, `AI 建议 TRIM（${rec.confidence}%）`, rec.confidence);
-      trades.push({ action: "SELL", ticker: p.ticker, name: p.name, shares: sellShares, price: px, amount, reason: `AI TRIM (${rec.confidence}%)` });
-    }
-  }
+  //    cap, then AI TRIM halves. Sold tickers may not be re-bought today —
+  //    sell-then-rebuy would churn the book against a stale signal set.
+  const soldToday = runSellSide(db, date, input, trades, "");
 
   // ── BUY side: fill up to the sentiment target with top-confidence calls ──
   if (targetPct > 0) {
@@ -497,4 +527,202 @@ export function tradesForDate(book: BookId, date: string = beijingDate()): Execu
 /** Format a trade compactly for the QQ digest, e.g. 买入 生益科技 200股@19.00 ¥3800. */
 export function formatTrade(t: ExecutedTrade): string {
   return `${t.action === "BUY" ? "买入" : "卖出"} ${t.name} ${t.shares}股@${t.price.toFixed(2)} ¥${round2(t.amount)}`;
+}
+
+// ── Intraday flatten (10:00 / 13:00) ────────────────────────────────
+
+/**
+ * SELL-ONLY fill during the intraday sessions: the AI may decide to go flat
+ * mid-day (退潮清仓 / 5-trading-day cap / TRIM). Never buys — entries still
+ * wait for the 22:00 close fill. Idempotent per (date, session) via the
+ * trade_days marker; the evening run uses a different key so it still fills
+ * the BUY side afterwards.
+ */
+export function executeIntradayFlat(
+  book: BookId,
+  input: {
+    date?: string;
+    session: "am" | "pm"; // 10:00 / 13:00 北京时间
+    prices: Record<string, number>;
+    aiRecs: AIBuyRecommendation[];
+    sentiment: MarketSentiment | null;
+  },
+): { skipped: boolean; trades: ExecutedTrade[] } {
+  const db = getDb(book);
+  const date = input.date ?? beijingDate();
+  ensureAccount(db, date);
+  const key = `${date}#${input.session}`;
+  if (db.prepare("SELECT trade_date FROM trade_days WHERE trade_date = ?").get(key)) {
+    return { skipped: true, trades: tradesForDate(book, key) };
+  }
+  // New month and the evening reset hasn't run yet — never trade a stale book.
+  if (needsMonthlyReset(db, date)) return { skipped: true, trades: [] };
+
+  const trades: ExecutedTrade[] = [];
+  runSellSide(db, date, input, trades, input.session === "am" ? "（盘中10:00）" : "（盘中13:00）");
+  db.prepare("INSERT INTO trade_days (trade_date) VALUES (?) ON CONFLICT(trade_date) DO NOTHING").run(key);
+  return { skipped: false, trades };
+}
+
+// ── Monthly statistics (monthly report) ─────────────────────────────
+
+export interface RoundTrip {
+  ticker: string;
+  name: string;
+  buyAmount: number;
+  sellAmount: number;
+  boughtShares: number;
+  soldShares: number;
+  /** Realized P&L on the sold portion (buy-avg-cost basis); null while fully held. */
+  realized: number | null;
+  status: "已平仓" | "部分平仓" | "持仓中";
+  /** Trading days first-buy → last-sell; null while still held. */
+  holdDays: number | null;
+}
+
+export interface MonthStats {
+  month: string;
+  /** monthly_history row — null while the month is still running. */
+  startCapital: number;
+  endTotal: number | null;
+  pnl: number | null;
+  pnlPct: number | null;
+  equityCurve: Array<{ date: string; total: number }>;
+  peak: number | null;
+  trough: number | null;
+  maxDrawdownPct: number | null;
+  trades: Array<ExecutedTrade & { date: string; session: "收盘" | "盘中10:00" | "盘中13:00" }>;
+  roundTrips: RoundTrip[];
+  daysTraded: number;
+  buyCount: number;
+  sellCount: number;
+  winCount: number;
+  lossCount: number;
+  /** Mean holding period of fully-closed round trips (trading days). */
+  avgHoldDays: number | null;
+  /** Days spent fully in cash. */
+  flatDays: number;
+}
+
+/**
+ * Aggregate one book's month: equity curve, round trips with realized P&L,
+ * and operational stats. Works for a running month too (endTotal null).
+ */
+export function monthlyStats(book: BookId, month: string): MonthStats {
+  const db = getDb(book);
+  const prefix = `${month}%`;
+
+  const hist = db.prepare("SELECT * FROM monthly_history WHERE month = ?").get(month) as
+    | { month: string; start_capital: number; end_total: number; pnl: number; pnl_pct: number }
+    | undefined;
+  const acc = db.prepare("SELECT month_start FROM account WHERE id = 1").get() as
+    | { month_start: number }
+    | undefined;
+  const startCapital = hist?.start_capital ?? acc?.month_start ?? MONTHLY_CAPITAL;
+
+  const pnlRows = db
+    .prepare("SELECT trade_date, total, market_value FROM daily_pnl WHERE trade_date LIKE ? ORDER BY trade_date")
+    .all(prefix) as Array<{ trade_date: string; total: number; market_value: number }>;
+  const equityCurve = pnlRows.map((r) => ({ date: r.trade_date, total: r.total }));
+  const totals = equityCurve.map((p) => p.total);
+  const peak = totals.length > 0 ? Math.max(...totals) : null;
+  const trough = totals.length > 0 ? Math.min(...totals) : null;
+  // Max peak→subsequent-trough drawdown over the curve.
+  let maxDrawdownPct: number | null = null;
+  let runningPeak = -Infinity;
+  for (const t of totals) {
+    runningPeak = Math.max(runningPeak, t);
+    if (runningPeak > 0) {
+      const dd = ((t - runningPeak) / runningPeak) * 100;
+      maxDrawdownPct = dd < (maxDrawdownPct ?? 0) ? dd : maxDrawdownPct;
+    }
+  }
+
+  const rawTrades = db
+    .prepare("SELECT trade_date, ticker, name, action, shares, price, amount, reason FROM trades WHERE trade_date LIKE ? ORDER BY id")
+    .all(prefix) as Array<{
+    trade_date: string; ticker: string; name: string; action: string; shares: number; price: number; amount: number; reason: string;
+  }>;
+  const trades = rawTrades.map((t) => {
+    const [d, session] = t.trade_date.split("#");
+    return {
+      date: d,
+      session: (session === "am" ? "盘中10:00" : session === "pm" ? "盘中13:00" : "收盘") as "收盘" | "盘中10:00" | "盘中13:00",
+      action: t.action as "BUY" | "SELL",
+      ticker: t.ticker,
+      name: t.name,
+      shares: t.shares,
+      price: t.price,
+      amount: t.amount,
+      reason: t.reason,
+    };
+  });
+
+  // Round trips per ticker: avg-cost basis on the bought shares.
+  const byTicker = new Map<string, { name: string; buyAmount: number; sellAmount: number; boughtShares: number; soldShares: number; firstBuy: string | null; lastSell: string | null }>();
+  for (const t of trades) {
+    const b = byTicker.get(t.ticker) ?? {
+      name: t.name, buyAmount: 0, sellAmount: 0, boughtShares: 0, soldShares: 0, firstBuy: null, lastSell: null,
+    };
+    if (t.action === "BUY") {
+      b.buyAmount += t.amount;
+      b.boughtShares += t.shares;
+      b.firstBuy ??= t.date;
+    } else {
+      b.sellAmount += t.amount;
+      b.soldShares += t.shares;
+      b.lastSell = t.date;
+    }
+    byTicker.set(t.ticker, b);
+  }
+  const roundTrips: RoundTrip[] = [...byTicker.entries()].map(([ticker, b]) => {
+    const avgCost = b.boughtShares > 0 ? b.buyAmount / b.boughtShares : 0;
+    const fullyClosed = b.boughtShares > 0 && b.soldShares >= b.boughtShares;
+    const partiallySold = b.soldShares > 0 && b.soldShares < b.boughtShares;
+    const realized =
+      b.soldShares > 0 && b.boughtShares > 0
+        ? round2(b.sellAmount - avgCost * b.soldShares)
+        : null;
+    const status: RoundTrip["status"] = fullyClosed ? "已平仓" : partiallySold ? "部分平仓" : "持仓中";
+    return {
+      ticker,
+      name: b.name,
+      buyAmount: round2(b.buyAmount),
+      sellAmount: round2(b.sellAmount),
+      boughtShares: b.boughtShares,
+      soldShares: b.soldShares,
+      realized,
+      status,
+      holdDays: fullyClosed && b.firstBuy && b.lastSell ? tradingDaysBetween(b.firstBuy, b.lastSell) : null,
+    };
+  }).sort((a, z) => (a.realized ?? 0) - (z.realized ?? 0)); // 亏最多的排前面
+
+  const buyCount = trades.filter((t) => t.action === "BUY").length;
+  const sellCount = trades.filter((t) => t.action === "SELL").length;
+  const closed = roundTrips.filter((r) => r.status === "已平仓" && r.realized != null);
+  const winCount = closed.filter((r) => r.realized! > 0).length;
+  const lossCount = closed.filter((r) => r.realized! <= 0).length;
+  const holdDays = closed.map((r) => r.holdDays ?? 0).filter((d) => d >= 0);
+
+  return {
+    month,
+    startCapital,
+    endTotal: hist?.end_total ?? null,
+    pnl: hist?.pnl ?? null,
+    pnlPct: hist?.pnl_pct ?? null,
+    equityCurve,
+    peak,
+    trough,
+    maxDrawdownPct,
+    trades,
+    roundTrips,
+    daysTraded: new Set(trades.filter((t) => t.action === "BUY").map((t) => t.date)).size,
+    buyCount,
+    sellCount,
+    winCount,
+    lossCount,
+    avgHoldDays: holdDays.length > 0 ? round2(holdDays.reduce((s, d) => s + d, 0) / holdDays.length) : null,
+    // 当日收盘空仓的天数（market_value=0 的快照）。
+    flatDays: pnlRows.filter((r) => r.market_value === 0).length,
+  };
 }

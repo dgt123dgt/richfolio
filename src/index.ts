@@ -27,13 +27,19 @@ import {
   type BookId,
   beijingDate,
   executeDailyTrades,
+  executeIntradayFlat,
+  monthlyStats,
   snapshotAndSummarize,
   type PaperSummary,
   type ExecutedTrade,
 } from "./paperTrading.js";
 import { recsForProvider } from "./aiAggregation.js";
 import { saveBriefArchive } from "./briefArchive.js";
+import { buildMonthlyReport } from "./monthlyReport.js";
+import { sendMonthlyReport } from "./monthlyEmail.js";
 import { sendIntradayBrief } from "./email.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -311,10 +317,11 @@ async function runBaselineComparison(input: {
 }
 
 const isWeekly = process.argv.includes("--weekly");
+const isMonthly = process.argv.includes("--monthly");
 const isIntraday = process.argv.includes("--intraday");
 const isCrypto = process.argv.includes("--crypto");
 const isRefresh = process.argv.includes("--refresh");
-const isDailyBrief = !isWeekly && !isIntraday && !isCrypto && !isRefresh;
+const isDailyBrief = !isWeekly && !isMonthly && !isIntraday && !isCrypto && !isRefresh;
 const refreshTickerRaw = isRefresh ? process.argv[process.argv.length - 1] : null;
 const refreshTicker =
   refreshTickerRaw && !refreshTickerRaw.startsWith("-") ? refreshTickerRaw.toUpperCase() : null;
@@ -511,9 +518,43 @@ try {
       `Review: ${review.totalPredictions} predictions, ${review.hits.length} hit / ${review.misses.length} miss (${review.accuracy.toFixed(0)}% accuracy)`,
     );
     await sendWeeklyReview(review);
+  } else if (isMonthly) {
+    // Monthly mode（手动/补发）: 双 AI 月度复盘 — 净值曲线图、当月个股盈亏、
+    // 操作特点/市场态势/自评/改进方向。常规路径是 daily 在月初首跑后自动链式
+    // 补发上月月报（见 daily 分支末尾）；本分支用 `npm run monthly -- 2026-11`
+    // 指定月份重发，默认报上一个自然月。
+    console.log("\nMode: monthly review");
+    const monthArg = process.argv[process.argv.indexOf("--monthly") + 1];
+    const month =
+      monthArg && /^\d{4}-\d{2}$/.test(monthArg)
+        ? monthArg
+        : beijingDate(new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)).slice(0, 7);
+    const monthly = await buildMonthlyReport(month);
+    console.log(
+      `Monthly ${month}: ` +
+        monthly.books
+          .map((b) => `${b.label}仓 ${b.stats.roundTrips.length} 笔交易 ${b.stats.pnl != null ? (b.stats.pnl >= 0 ? "+" : "") + b.stats.pnlPct!.toFixed(2) + "%" : "进行中"}`)
+          .join(" | "),
+    );
+    await sendMonthlyReport(monthly);
+    try {
+      await sendQQText(
+        `【月度复盘】${month}\n` +
+          monthly.books
+            .map(
+              (b) =>
+                `${b.label}仓:月收益${b.stats.pnl != null ? (b.stats.pnl >= 0 ? "+" : "") + b.stats.pnlPct!.toFixed(2) + "%" : "进行中"} 已平仓赢${b.stats.winCount}/亏${b.stats.lossCount} 最大回撤${b.stats.maxDrawdownPct != null ? b.stats.maxDrawdownPct.toFixed(2) + "%" : "—"}`,
+            )
+            .join("\n") +
+          `\n详细曲线与两个 AI 的自我复盘见邮件`,
+      );
+    } catch (err) {
+      console.warn(`⚠ QQ monthly push failed: ${(err as Error).message}`);
+    }
   } else if (isIntraday) {
     // Intraday mode (10:00 / 13:00 北京时间): 盘中简报 — 大盘情绪 + AI 推荐 +
-    // 模拟盘盈亏（QQ + 简化 HTML 邮件）。不执行交易：撮合只发生在盘后日线。
+    // 双仓盈亏（QQ + 简化 HTML 邮件）。盘中允许卖出至空仓（退潮清仓/5日强平/
+    // AI TRIM），但绝不买入——建仓只发生在 22:00 收盘撮合。
     // 之后保留原有 baseline 比对告警（信号增强时才发）。
     console.log("\nMode: intraday check");
 
@@ -536,7 +577,23 @@ try {
       for (const q of Object.values(prices)) {
         if (/\.(SS|SZ)$/i.test(q.ticker) && q.currency === "CNY") cnyPrices[q.ticker] = q.price;
       }
-      const books = BOOK_IDS.map((id) => ({ id, paper: snapshotAndSummarize(id, { prices: cnyPrices }) }));
+      // 盘中卖出窗口：AI 可以选择让仓位空掉（按当前时段判定 am/pm，幂等）。
+      const hour = Number(new Date().toLocaleTimeString("sv-SE", { timeZone: "Asia/Shanghai", hour12: false }).slice(0, 2));
+      const session: "am" | "pm" = hour < 12 ? "am" : "pm";
+      const books: Array<{ id: BookId; paper: PaperSummary; trades: ExecutedTrade[] }> = [];
+      for (const id of BOOK_IDS) {
+        const flat = executeIntradayFlat(id, {
+          session,
+          prices: cnyPrices,
+          aiRecs: recsForProvider(aiRecs, id),
+          sentiment,
+        });
+        const paper = snapshotAndSummarize(id, { prices: cnyPrices });
+        books.push({ id, paper, trades: flat.trades });
+        if (flat.trades.length > 0) {
+          console.log(`Intraday flat [${id}]: ${flat.trades.length} sell(s)`);
+        }
+      }
       const qqOk = await sendQQText(buildIntradayDigest({ sentiment, aiRecs, books }));
       if (qqOk) console.log("QQ intraday digest pushed");
       await sendIntradayBrief({ sentiment, aiRecs, books });
@@ -671,6 +728,49 @@ try {
       } catch (err) {
         console.warn(`⚠ QQ push failed (email unaffected): ${(err as Error).message}`);
       }
+    }
+
+    // 月报链：月初首个交易日的 daily 已完成上月封存（monthly_history），此时
+    // 若上一自然月的月报还没发过就补发。不占独立 cron——免费额度只剩 1 个，
+    // 而且这样天然保证月报总是跑在重置之后。
+    try {
+      const prevMonth = beijingDate(new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)).slice(0, 7);
+      const sentFile = resolve("state/monthly-report-sent.json");
+      let sent: { month?: string } = {};
+      try {
+        sent = JSON.parse(readFileSync(sentFile, "utf-8")) as { month?: string };
+      } catch {
+        /* first ever run */
+      }
+      if (sent.month !== prevMonth) {
+        const hasTrades =
+          monthlyStats("deepseek", prevMonth).trades.length > 0 ||
+          monthlyStats("gemini", prevMonth).trades.length > 0;
+        if (hasTrades) {
+          console.log(`\nChaining monthly report for ${prevMonth}...`);
+          const monthly = await buildMonthlyReport(prevMonth);
+          await sendMonthlyReport(monthly);
+          try {
+            await sendQQText(
+              `【月度复盘】${prevMonth}\n` +
+                monthly.books
+                  .map(
+                    (b) =>
+                      `${b.label}仓:月收益${b.stats.pnl != null ? (b.stats.pnl >= 0 ? "+" : "") + b.stats.pnlPct!.toFixed(2) + "%" : "进行中"} 已平仓赢${b.stats.winCount}/亏${b.stats.lossCount}`,
+                  )
+                  .join("\n") +
+                `\n详细曲线与两个 AI 的自我复盘见邮件`,
+            );
+          } catch (err) {
+            console.warn(`⚠ QQ monthly push failed: ${(err as Error).message}`);
+          }
+        }
+        mkdirSync(dirname(sentFile), { recursive: true });
+        writeFileSync(sentFile, JSON.stringify({ month: prevMonth, at: new Date().toISOString() }));
+        console.log(`Monthly report for ${prevMonth}: ${hasTrades ? "sent" : "skipped (no trades)"}`);
+      }
+    } catch (err) {
+      console.warn(`⚠ Monthly report chain failed: ${(err as Error).message}`);
     }
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);

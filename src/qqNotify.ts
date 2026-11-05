@@ -113,11 +113,11 @@ export function buildEveningDigest(input: {
   return lines.filter(Boolean).join("\n");
 }
 
-/** 10:00 / 13:00 盘中快报 — 情绪 + AI 推荐 + 两仓盈亏. */
+/** 10:00 / 13:00 盘中快报 — 情绪 + AI 推荐 + 两仓盈亏与盘中减仓. */
 export function buildIntradayDigest(input: {
   sentiment: MarketSentiment | null;
   aiRecs: AIBuyRecommendation[];
-  books: Array<{ id: BookId; paper: PaperSummary }>;
+  books: Array<{ id: BookId; paper: PaperSummary; trades?: ExecutedTrade[] }>;
   date?: Date;
 }): string {
   const d = input.date ?? new Date();
@@ -147,6 +147,9 @@ export function buildIntradayDigest(input: {
   }
   for (const b of input.books) {
     lines.push(bookLine(BOOK_LABELS[b.id] ?? b.id, b.paper));
+    if (b.trades && b.trades.length > 0) {
+      lines.push(`  盘中操作:${b.trades.map(formatTrade).join("；")}`);
+    }
   }
   return lines.filter(Boolean).join("\n");
 }
