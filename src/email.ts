@@ -22,6 +22,9 @@ const S = {
   yellow: "#f59e0b",
   blue: "#3b82f6",
   border: "#e2e8f0",
+  // Row accents for the hot-stock screen: 妖股 purple, 白马 amber.
+  purple: "#7c3aed",
+  amber: "#b45309",
 } as const;
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -468,9 +471,11 @@ export function buildEmailHtml(
       ? buildAISection(aiRecs, technicals, priceData)
       : buildFallbackBuysSection(report);
 
-  // Watch-only mode (no portfolio configured): hide money stats and the
-  // allocation table, and show the rule-based technical screen instead.
+  // Watch-only mode (no portfolio configured): the 100-stock technical screen
+  // carries the whole brief, so it is rendered at the very end — after the AI
+  // picks and the news — instead of pushing them down.
   const hasPortfolio = report.items.length > 0;
+  const techScreenBlock = hasPortfolio ? "" : techScreenSection(technicals, priceData);
   const statsSection = hasPortfolio
     ? `
 <!-- Portfolio Stats -->
@@ -490,7 +495,7 @@ export function buildEmailHtml(
     </td>
   </tr></table>
 </td></tr>`
-    : techScreenSection(technicals, priceData);
+    : "";
 
   return `<!DOCTYPE html>
 <html>
@@ -605,6 +610,9 @@ ${
     : ""
 }
 
+<!-- Hot-stock technical screen (watch-only mode only) — kept last on purpose -->
+${techScreenBlock}
+
 ${
   hasCrossCurrency
     ? `
@@ -640,6 +648,76 @@ ${
 // Rule-based "can I buy this today?" verdict per hot stock, rendered for the
 // whole top-N list. Pure technical rules — the AI section adds news sentiment
 // and deeper reasoning on top of this.
+// A-share session limits: main board caps at ±10%. Two-decimal rounding means a
+// real limit print lands anywhere from ~9.9% to ~10.1%, so the bar sits at 9.5%.
+const LIMIT_CHANGE_THRESHOLD = 9.5;
+
+/** Coloured chip for a special trading state, with a row accent. */
+interface StatusChip {
+  text: string;
+  bg: string;
+  fg: string;
+  rowBg: string;
+  /** Higher wins when several chips land on one row. */
+  priority: number;
+}
+
+const CHIP_LIMIT_UP: Omit<StatusChip, "text"> = {
+  bg: "#fee2e2",
+  fg: "#b91c1c",
+  rowBg: "#fef2f2",
+  priority: 3,
+};
+const CHIP_LIMIT_DOWN: Omit<StatusChip, "text"> = {
+  bg: "#dcfce7",
+  fg: "#15803d",
+  rowBg: "#f0fdf4",
+  priority: 2,
+};
+const CHIP_DEMON: Omit<StatusChip, "text"> = {
+  bg: "#ede9fe",
+  fg: "#6d28d9",
+  rowBg: "#f5f3ff",
+  priority: 4,
+};
+const CHIP_WHITE_HORSE: Omit<StatusChip, "text"> = {
+  bg: "#fef3c7",
+  fg: "#b45309",
+  rowBg: "#fffbeb",
+  priority: 1,
+};
+
+/**
+ * 白马股 heuristic — big, consistently profitable, sanely valued. Deliberately
+ * loose: it only labels a row, it never gates a recommendation.
+ */
+function isWhiteHorse(q: QuoteData | undefined): boolean {
+  if (!q) return false;
+  const cap = q.marketCap ?? 0;
+  const roe = q.returnOnEquity ?? 0;
+  const pe = q.trailingPE;
+  return cap >= 5e10 && roe >= 0.1 && pe != null && pe > 0 && pe <= 60;
+}
+
+function statusChips(t: TechnicalData, q: QuoteData | undefined): StatusChip[] {
+  const chips: StatusChip[] = [];
+  const chg = t.priceChange1d;
+
+  if (t.consecutiveLimitUps >= 2) {
+    chips.push({ ...CHIP_DEMON, text: `${t.consecutiveLimitUps}连板` });
+  }
+  if (chg != null && chg >= LIMIT_CHANGE_THRESHOLD) {
+    chips.push({ ...CHIP_LIMIT_UP, text: "涨停" });
+  }
+  if (chg != null && chg <= -LIMIT_CHANGE_THRESHOLD) {
+    chips.push({ ...CHIP_LIMIT_DOWN, text: "跌停" });
+  }
+  if (isWhiteHorse(q)) {
+    chips.push({ ...CHIP_WHITE_HORSE, text: "白马" });
+  }
+  return chips;
+}
+
 function techScreenSection(
   technicals: Record<string, TechnicalData>,
   priceData: Record<string, QuoteData>,
@@ -649,7 +727,16 @@ function techScreenSection(
 
   const rows = entries
     .map(([ticker, t]) => {
-      const price = priceData[ticker]?.price;
+      const quote = priceData[ticker];
+      const price = quote?.price;
+      const chg = t.priceChange1d;
+      const chips = statusChips(t, quote);
+      // Row tint follows the most significant chip: 连板 > 涨停 > 跌停 > 白马.
+      const accent = chips.reduce<StatusChip | null>(
+        (best, c) => (best == null || c.priority > best.priority ? c : best),
+        null,
+      );
+
       const tags: { text: string; color: string }[] = [];
       if (t.rsi14 != null) {
         if (t.rsi14 >= 70) tags.push({ text: "超买·勿追", color: S.red });
@@ -669,17 +756,43 @@ function techScreenSection(
       if (tags.length === 0) {
         tags.push({ text: `动量${MOMENTUM_LABELS[t.momentumSignal] ?? t.momentumSignal}`, color: S.muted });
       }
+
+      // A limit-up or 连板 stock is not a "可关注" entry: the rules below would
+      // otherwise read the momentum as bullish and invite a chase.
+      const atLimitUp = chg != null && chg >= LIMIT_CHANGE_THRESHOLD;
+      const atLimitDown = chg != null && chg <= -LIMIT_CHANGE_THRESHOLD;
       const verdict =
-        tags.some((x) => x.color === S.red) && !tags.some((x) => x.color === S.green)
-          ? { text: "不宜买", color: S.red }
-          : tags.some((x) => x.color === S.green)
-            ? { text: "可关注", color: S.green }
-            : { text: "观望", color: S.muted };
+        t.consecutiveLimitUps >= 2
+          ? { text: "妖股·勿追", color: S.purple }
+          : atLimitUp
+            ? { text: "涨停·勿追", color: S.red }
+            : atLimitDown
+              ? { text: "跌停·勿接", color: S.green }
+              : tags.some((x) => x.color === S.red) && !tags.some((x) => x.color === S.green)
+                ? { text: "不宜买", color: S.red }
+                : tags.some((x) => x.color === S.green)
+                  ? { text: "可关注", color: S.green }
+                  : { text: "观望", color: S.muted };
+
+      const rowBg = accent ? `background:${accent.rowBg};` : "";
+      const rowBorder = accent
+        ? `border-left:3px solid ${accent.fg};`
+        : "border-left:3px solid transparent;";
 
       return `
-    <tr>
-      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};font-weight:bold;">${displayName(ticker)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${ticker}</div></td>
-      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">${price != null ? fmt$(price) : "—"}</td>
+    <tr style="${rowBg}">
+      <td style="padding:4px 3px;${rowBorder}border-bottom:1px solid ${S.border};font-weight:bold;">${displayName(ticker)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${ticker}</div>${
+        chips.length > 0
+          ? `<div style="margin-top:2px;">${chips
+              .map(
+                (c) =>
+                  `<span style="display:inline-block;background:${c.bg};color:${c.fg};font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-right:3px;">${c.text}</span>`,
+              )
+              .join("")}</div>`
+          : ""
+      }</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;${accent ? `color:${accent.fg};font-weight:bold;` : ""}">${price != null ? fmt$(price) : "—"}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${chg == null ? S.muted : chg >= 0 ? S.red : S.green};font-weight:${chg == null ? "normal" : "bold"};">${chg == null ? "—" : fmtPct(chg)}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">RSI ${t.rsi14 ?? "—"}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">${tags.map((x) => `<span style="color:${x.color};font-size:10px;">${x.text}</span>`).join(" ")}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;"><span style="color:${verdict.color};font-size:11px;font-weight:bold;">${verdict.text}</span></td>
@@ -689,14 +802,22 @@ function techScreenSection(
 
   return `
 <tr><td style="padding:16px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">技术面快筛</h2>
-  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">按当日热度排序 · 规则判定仅供参考，深度分析见下方 AI 建议。</p>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">热度股技术面快筛</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">按当日热度排序 · 规则判定仅供参考，深度分析见上方 AI 建议。</p>
+  <p style="margin:6px 0 0;font-size:10px;color:${S.muted};">
+    <span style="display:inline-block;background:${CHIP_LIMIT_UP.bg};color:${CHIP_LIMIT_UP.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">涨停</span>
+    <span style="display:inline-block;background:${CHIP_LIMIT_DOWN.bg};color:${CHIP_LIMIT_DOWN.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">跌停</span>
+    <span style="display:inline-block;background:${CHIP_DEMON.bg};color:${CHIP_DEMON.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">连板妖股</span>
+    <span style="display:inline-block;background:${CHIP_WHITE_HORSE.bg};color:${CHIP_WHITE_HORSE.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">白马</span>
+    　涨跌为正红色、为负绿色（A 股习惯）。
+  </p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:11px;">
     <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
-      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">名称</td>
+      <td style="padding:4px 3px 4px 6px;border-bottom:1px solid ${S.border};">名称</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">涨跌</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">RSI</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">信号</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;">结论</td>

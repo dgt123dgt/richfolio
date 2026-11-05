@@ -73,6 +73,13 @@ export interface TechnicalData {
   // Latest-day price change % (today's close vs yesterday's close).
   // Used together with `volumeLatest1d` to classify volume spikes.
   priceChange1d: number | null;
+  // Trailing consecutive limit-up sessions (A-share main board caps at ±10% per
+  // day). ≥2 means 连板 — the regime readers call 妖股, where the usual
+  // "超买勿追" read does not apply and the report tags the row instead.
+  consecutiveLimitUps: number;
+  // Cumulative % change over the last 5 sessions. Momentum context that also
+  // tells a steady trend apart from a parabolic run.
+  recentGain5d: number | null;
 }
 
 // ── Computation helpers ─────────────────────────────────────────────
@@ -421,6 +428,28 @@ export function computeTechnicals(
     }
   }
 
+  // Trailing consecutive limit-up sessions. Main-board A-shares cap at 10%, and
+  // rounding at two decimals means a real limit-up prints anywhere from ~9.9%
+  // to ~10.1%, so the bar sits at 9.5%. Two or more in a row is 连板 (妖股).
+  let consecutiveLimitUps = 0;
+  for (let i = closes.length - 1; i >= 1; i--) {
+    const prev = closes[i - 1];
+    if (prev <= 0) break;
+    const chgPct = ((closes[i] - prev) / prev) * 100;
+    if (chgPct >= 9.5) consecutiveLimitUps++;
+    else break;
+  }
+
+  // Cumulative 5-session gain — separates a steady climb from a parabolic run.
+  let recentGain5d: number | null = null;
+  if (closes.length >= 6) {
+    const base = closes[closes.length - 6];
+    if (base > 0) {
+      recentGain5d =
+        Math.round(((closes[closes.length - 1] - base) / base) * 1000) / 10;
+    }
+  }
+
   return {
     ticker,
     sma50: Math.round(sma50 * 100) / 100,
@@ -452,5 +481,7 @@ export function computeTechnicals(
     pricePercentile90d,
     volumeLatest1d,
     priceChange1d,
+    consecutiveLimitUps,
+    recentGain5d,
   };
 }

@@ -446,6 +446,31 @@ describe("computeTechnicals", () => {
     assert.equal(r.recentLow7d, 100);
   });
 
+  test("counts trailing limit-up sessions (连板) and stops at the first non-limit day", () => {
+    // 60 flat sessions, then two +10% days and one +10% day after a flat bar:
+    // the trailing run is what counts, so only the last bar is 1连板.
+    const closes = new Array(60).fill(100);
+    closes[57] = 110;
+    closes[58] = 121;
+    closes[59] = 121; // flat bar breaks the run
+    const broken = computeTechnicals("TEST", makeCandles(closes))!;
+    assert.equal(broken.consecutiveLimitUps, 0);
+
+    // Flat bar, then two +10% sessions at the tail → a 2连板 run.
+    const run = new Array(60).fill(100);
+    run[58] = 110;
+    run[59] = 121;
+    const r = computeTechnicals("TEST", makeCandles(run))!;
+    assert.equal(r.consecutiveLimitUps, 2);
+  });
+
+  test("reports the 5-session cumulative gain", () => {
+    const closes = new Array(60).fill(100);
+    closes[59] = 110; // +10% versus closes[54]
+    const r = computeTechnicals("TEST", makeCandles(closes))!;
+    assert.equal(r.recentGain5d, 10);
+  });
+
   test("is invariant to unit scaling for unitless indicators", () => {
     // A cross-pair priced ~1.3M in CRO must produce the same RSI/%B/Stoch/ATR%
     // as the same shape priced ~100 in USD — only absolute levels differ. Note
