@@ -20,6 +20,7 @@ import { fetchNews, fetchMarketHotNews } from "./fetchNews.js";
 import { fetchNationalTeamFlags } from "./fetchHolderFlags.js";
 import { fetchStockBoards } from "./fetchBoards.js";
 import { getLongTermLabels } from "./stockLabels.js";
+import { fetchMarketSentiment } from "./marketSentiment.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -519,7 +520,7 @@ try {
     }
   } else {
     // Daily mode: full brief with news + AI + technicals
-    const [news, technicals, hotNews, nationalTeam, boards] = await Promise.all([
+    const [news, technicals, hotNews, nationalTeam, boards, sentiment] = await Promise.all([
       fetchNews(tickers, prices),
       fetchTechnicals(tickers, prices, fxRates),
       // Market-wide flashes for the "近 6 小时市场热点" block; failure is benign.
@@ -537,6 +538,11 @@ try {
       fetchStockBoards(tickers).catch((err) => {
         console.warn(`⚠ Board info fetch failed: ${(err as Error).message}`);
         return {} as Record<string, import("./fetchBoards.js").BoardInfo>;
+      }),
+      // 每日情绪 (涨停/炸板/跌停池 + 概念打分); failure is benign.
+      fetchMarketSentiment().catch((err) => {
+        console.warn(`⚠ Market sentiment fetch failed: ${(err as Error).message}`);
+        return null;
       }),
     ]);
     // Cross-pair indicators come from the crypto.com candles, not Yahoo. Required,
@@ -574,7 +580,7 @@ try {
     // Long-term 底色 labels from the half-year DB (state/stock-labels.json) —
     // a new ticker is looked up once, cached, reused until expiry.
     const longTermLabels = getLongTermLabels(tickers, prices, boards);
-    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards, longTermLabels);
+    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards, longTermLabels, sentiment);
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);
     } catch (err) {

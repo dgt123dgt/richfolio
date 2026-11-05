@@ -8,6 +8,7 @@ import type { QuoteData } from "./fetchPrices.js";
 import type { BoardInfo } from "./fetchBoards.js";
 import { classifyHotNewsImpact } from "./hotNewsImpact.js";
 import type { LongTermLabel } from "./stockLabels.js";
+import type { MarketSentiment, ConceptScore, MarketPhase } from "./marketSentiment.js";
 import { escapeHtmlAttr, formatMoney } from "./util.js";
 import { hasStrongBuyVote } from "./aiAggregation.js";
 
@@ -482,6 +483,7 @@ export function buildEmailHtml(
   nationalTeam: ReadonlySet<string> = new Set(),
   boards: Record<string, BoardInfo> = {},
   longTermLabels: Record<string, string[]> = {},
+  sentiment: MarketSentiment | null = null,
 ): string {
   const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
@@ -538,6 +540,9 @@ export function buildEmailHtml(
   const techScreenBlock = hasPortfolio
     ? ""
     : techScreenSection(technicals, priceData, nationalTeam, boards, longTermLabels);
+  const sentimentSection = sentiment
+    ? buildSentimentSection(sentiment)
+    : "";
   const statsSection = hasPortfolio
     ? `
 <!-- Portfolio Stats -->
@@ -570,6 +575,8 @@ export function buildEmailHtml(
   <h1 style="margin:0;font-size:22px;color:#ffffff;">Richfolio 每日简报（${briefPeriod()}）</h1>
   <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date}</p>
 </td></tr>
+
+${sentimentSection}
 
 ${statsSection}
 
@@ -873,6 +880,77 @@ function renderChips(chips: StatusChip[], fontSize = "9px"): string {
     .join("");
 }
 
+// ── 每日情绪 — 游资情绪周期 (混沌/主升/退潮) ─────────────────────────
+const PHASE_BADGE: Record<MarketPhase | "过渡", { bg: string; fg: string }> = {
+  主升: { bg: "#dcfce7", fg: "#15803d" },
+  混沌: { bg: "#fef9c3", fg: "#a16207" },
+  退潮: { bg: "#fee2e2", fg: "#b91c1c" },
+  分歧: { bg: "#f1f5f9", fg: "#475569" },
+  过渡: { bg: "#f1f5f9", fg: "#475569" },
+};
+
+const phasePill = (phase: MarketPhase | "过渡"): string => {
+  const c = PHASE_BADGE[phase];
+  return `<span style="display:inline-block;background:${c.bg};color:${c.fg};font-weight:bold;padding:2px 10px;border-radius:10px;font-size:12px;">${phase}</span>`;
+};
+
+function buildSentimentSection(s: MarketSentiment): string {
+  const m = s.metrics;
+  const zbRate = m.ztCount + m.zbCount > 0 ? m.zbCount / (m.ztCount + m.zbCount) : 0;
+  const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+  const dateLabel = `${s.date.slice(4, 6)}/${s.date.slice(6, 8)}`;
+
+  const conceptRows = s.concepts
+    .map(
+      (c: ConceptScore) => `
+    <tr>
+      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};font-weight:bold;color:#1a202c;">${c.name}　${phasePill(c.phase)}</td>
+      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.ztCount} 家<span style="color:${S.muted};font-size:10px;">（昨 ${c.yCount}）</span></td>
+      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.maxLbc} 板</td>
+      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${c.premium >= 0 ? "#15803d" : "#b91c1c"};">${c.premium >= 0 ? "+" : ""}${c.premium.toFixed(1)}%</td>
+      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.score}</td>
+    </tr>`,
+    )
+    .join("");
+
+  return `
+<tr><td style="padding:16px 24px 6px;background:${S.cardBg};">
+  <table width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td><h2 style="margin:0;font-size:16px;color:${S.blue};">每日情绪　${phasePill(s.phase)}<span style="font-size:11px;color:${S.muted};font-weight:normal;">　命中 ${s.matches}/6 · ${dateLabel}</span></h2></td>
+  </tr></table>
+  <p style="margin:6px 0 0;font-size:11px;color:#1a202c;">${s.positionHint}</p>
+  <p style="margin:6px 0 0;font-size:11px;color:${S.muted};">
+    涨停 <b style="color:#1a202c;">${m.ztCount}</b> 家 · 最高 <b style="color:#1a202c;">${m.maxLbc}</b> 板 ·
+    晋级率 <b style="color:#1a202c;">${pct(m.promoteRate)}</b> · 炸板率 <b style="color:#1a202c;">${pct(zbRate)}</b> ·
+    昨日涨停红盘率 <b style="color:#1a202c;">${pct(m.redRate)}</b> · 跌停/大面 <b style="color:#1a202c;">${m.bigLossCount}</b> 家
+    <span style="color:${S.muted};">（昨涨停 ${m.yesterdayZtCount} 家，平均溢价 ${m.avgPremium >= 0 ? "+" : ""}${m.avgPremium.toFixed(1)}%）</span>
+  </p>
+  ${s.detail.length > 0 && s.phase !== "分歧" ? `<p style="margin:4px 0 0;font-size:10px;color:${S.muted};">命中项：${s.detail.join(" · ")}</p>` : ""}
+</td></tr>
+${
+  s.concepts.length > 0
+    ? `
+<tr><td style="padding:0 24px;background:${S.cardBg};">
+  <p style="margin:8px 0 4px;font-size:11px;color:${S.blue};font-weight:bold;">热门题材（A 涨停量 40% · B 梯队 30% · C 昨日溢价 20% · D 增量 10%）</p>
+  <table width="100%" cellpadding="0" cellspacing="0" style="font-size:11px;">
+    <tr style="color:${S.muted};font-size:10px;">
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">题材</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">今日涨停</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">最高板</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">昨日溢价</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">综合</td>
+    </tr>
+    ${conceptRows}
+  </table>
+</td></tr>`
+    : ""
+}
+${s.relayHint ? `<tr><td style="padding:6px 24px 0;background:${S.cardBg};"><p style="margin:0;font-size:11px;color:${S.blue};">${s.relayHint}</p></td></tr>` : ""}
+<tr><td style="padding:4px 24px 12px;background:${S.cardBg};border-bottom:1px solid ${S.border};">
+  <p style="margin:0;font-size:10px;color:${S.muted};">阈值是经验区间、需连续两日共振确认；情绪周期 ≠ 指数涨跌，仅供仓位参考，不是买卖公式。</p>
+</td></tr>`;
+}
+
 function techScreenSection(
   technicals: Record<string, TechnicalData>,
   priceData: Record<string, QuoteData>,
@@ -1066,6 +1144,7 @@ export async function sendBrief(
   nationalTeam: ReadonlySet<string> = new Set(),
   boards: Record<string, BoardInfo> = {},
   longTermLabels: Record<string, string[]> = {},
+  sentiment: MarketSentiment | null = null,
 ): Promise<void> {
   const html = buildEmailHtml(
     report,
@@ -1078,6 +1157,7 @@ export async function sendBrief(
     nationalTeam,
     boards,
     longTermLabels,
+    sentiment,
   );
 
   const { error } = await resend.emails.send({

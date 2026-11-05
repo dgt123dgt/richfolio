@@ -7,6 +7,7 @@ import { buildEmailHtml } from "../src/email.js";
 // same way here, otherwise display names fall back to the raw symbol.
 import { runtimeTickerNames } from "../src/config.js";
 import { computeLongTermLabels } from "../src/stockLabels.js";
+import { fetchMarketSentiment } from "../src/marketSentiment.js";
 import type { BoardInfo } from "../src/fetchBoards.js";
 import type { AIBuyRecommendation } from "../src/providers/types.js";
 import type { TechnicalData } from "../src/technicals.js";
@@ -189,6 +190,9 @@ for (const t of Object.keys(priceData)) {
   longTermLabels[t] = computeLongTermLabels(priceData[t], boards[t]);
 }
 
+// 每日情绪 — real market data (pools are keyless), falls back to null off-hours.
+const sentiment = await fetchMarketSentiment().catch(() => null);
+
 const html = buildEmailHtml(
   report,
   news,
@@ -200,6 +204,7 @@ const html = buildEmailHtml(
   new Set(["601398.SS"]),
   boards,
   longTermLabels,
+  sentiment,
 );
 
 writeFileSync("smoke/email-preview.html", html, "utf8");
