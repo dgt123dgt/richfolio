@@ -905,10 +905,10 @@ function buildSentimentSection(s: MarketSentiment): string {
       (c: ConceptScore) => `
     <tr>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};font-weight:bold;color:#1a202c;">${c.name}　${phasePill(c.phase)}</td>
+      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};color:#1a202c;">${c.leader ? `${c.leader.name}<span style="color:${S.muted};font-size:10px;">　${c.leader.lbc}板</span>` : "—"}</td>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.ztCount} 家<span style="color:${S.muted};font-size:10px;">（昨 ${c.yCount}）</span></td>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.maxLbc} 板</td>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${c.premium >= 0 ? "#15803d" : "#b91c1c"};">${c.premium >= 0 ? "+" : ""}${c.premium.toFixed(1)}%</td>
-      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.score}</td>
     </tr>`,
     )
     .join("");
@@ -919,6 +919,11 @@ function buildSentimentSection(s: MarketSentiment): string {
     <td><h2 style="margin:0;font-size:16px;color:${S.blue};">每日情绪　${phasePill(s.phase)}<span style="font-size:11px;color:${S.muted};font-weight:normal;">　命中 ${s.matches}/6 · ${dateLabel}</span></h2></td>
   </tr></table>
   <p style="margin:6px 0 0;font-size:11px;color:#1a202c;">${s.positionHint}</p>
+  ${
+    s.leaderAlert
+      ? `<p style="margin:4px 0 0;font-size:11px;color:${s.leaderAlert.startsWith("⚠") ? "#b91c1c" : "#1a202c"};">${s.leaderAlert}</p>`
+      : ""
+  }
   <p style="margin:6px 0 0;font-size:11px;color:${S.muted};">
     涨停 <b style="color:#1a202c;">${m.ztCount}</b> 家 · 最高 <b style="color:#1a202c;">${m.maxLbc}</b> 板 ·
     晋级率 <b style="color:#1a202c;">${pct(m.promoteRate)}</b> · 炸板率 <b style="color:#1a202c;">${pct(zbRate)}</b> ·
@@ -957,14 +962,14 @@ ${
   s.concepts.length > 0
     ? `
 <tr><td style="padding:0 24px;background:${S.cardBg};">
-  <p style="margin:8px 0 4px;font-size:11px;color:${S.blue};font-weight:bold;">热门题材（A 涨停量 40% · B 梯队 30% · C 昨日溢价 20% · D 增量 10%）</p>
+  <p style="margin:8px 0 4px;font-size:11px;color:${S.blue};font-weight:bold;">热门题材（龙头领涨 · 昨日涨停今日溢价为持续性关键）</p>
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:11px;">
     <tr style="color:${S.muted};font-size:10px;">
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">题材</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">龙头</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">今日涨停</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">最高板</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">昨日溢价</td>
-      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">综合</td>
     </tr>
     ${conceptRows}
   </table>

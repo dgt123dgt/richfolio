@@ -80,9 +80,11 @@ export interface ConceptScore {
   maxLbc: number;
   /** 板块昨日涨停今日平均溢价 %. */
   premium: number;
-  /** A/B/C/D 加权总分 0-100. */
+  /** A/B/C/D 加权总分 0-100 — 仅用于内部排序选 TOP3，不展示. */
   score: number;
   phase: MarketPhase | "过渡";
+  /** 板块龙头 (最高连板标的). */
+  leader: { name: string; lbc: number } | null;
 }
 
 // ── 资金面 ──────────────────────────────────────────────────────────
@@ -125,6 +127,8 @@ export interface MarketSentiment {
   relayHint: string | null;
   /** 资金面 (成交额放量/缩量 + 板块主力净流入/流出)；抓取失败时缺省. */
   funds?: FundFlow;
+  /** 主线龙头盯防：断板/大面/停牌(核查)预警；正常时也点名龙头. */
+  leaderAlert: string | null;
 }
 
 // ── Pure classification (exported for tests) ────────────────────────
@@ -576,6 +580,7 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
     if (input.ztCount < 3) continue; // 太弱的板块不值得展示
     const score = scoreConcept(input);
     const phase = classifyConceptPhase({ ...input, premium: premium ?? 0 });
+    const leaderStock = [...stocks].sort((a, b) => b.lbc - a.lbc)[0] ?? null;
     concepts.push({
       name,
       ztCount: input.ztCount,
@@ -584,10 +589,13 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
       premium: premium ?? 0,
       score,
       phase,
+      leader: leaderStock ? { name: leaderStock.n, lbc: leaderStock.lbc } : null,
     });
   }
   concepts.sort((a, b) => b.score - a.score);
-  const top3 = concepts.slice(0, 3);
+  // Display order: raw limit-up count first (score stays internal for TOP3
+  // selection only — the weight formula is not shown in the brief).
+  const top3 = concepts.slice(0, 3).sort((a, b) => b.ztCount - a.ztCount || b.premium - a.premium);
 
   // Relay hint: yesterday's biggest theme vs today's top scorer.
   let relayHint: string | null = null;
@@ -598,6 +606,34 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
     relayHint = `注意接力信号：${todayTop} 正在卡位旧主线 ${yTop}（昨日涨停${yGroups.get(yTop)?.length ?? 0}家 → 今日转弱）`;
   } else if (todayTop && yTop && todayTop === yTop) {
     relayHint = `主线延续：${todayTop}（昨日涨停${yGroups.get(yTop)?.length ?? 0}家 → 今日${top3[0].ztCount}家）`;
+  }
+
+  // 主线龙头盯防 — the 仓位 hint says "看主线龙头是否被核", so name the leader
+  // and check its state: 继续涨停 / 断板回落 / 大面(被核) / 停牌(核查风险).
+  // The leader is yesterday's biggest theme's highest-board stock; today's
+  // pool membership + its quote tell which state it is in.
+  let leaderAlert: string | null = null;
+  const yLeaderGroup = yTop ? yGroups.get(yTop) : undefined;
+  const leaderPool = yLeaderGroup ?? (top3[0] ? todayGroups.get(top3[0].name) : undefined);
+  if (leaderPool && leaderPool.length > 0) {
+    const leader = [...leaderPool].sort((a, b) => b.lbc - a.lbc)[0];
+    const themeLabel = yTop ?? top3[0]?.name ?? "";
+    const inToday = today.pool.find((s) => s.c === leader.c);
+    if (inToday) {
+      leaderAlert = `主线龙头：${leader.n}（${themeLabel} · ${leader.lbc}板→今日${inToday.lbc}板）继续涨停，梯队完好`;
+    } else {
+      const pct = pctMap.get(leader.c);
+      const label = `${leader.n}（${themeLabel} · 昨${leader.lbc}板）`;
+      if (pct == null) {
+        leaderAlert = `⚠ 主线龙头 ${label} 今日停牌——警惕停牌核查/监管风险，题材高度或受限`;
+      } else if (pct <= -8) {
+        leaderAlert = `⚠ 主线龙头 ${label} 今日大面 ${pct.toFixed(1)}%，已被核——谨防板块批量退潮，勿抄底`;
+      } else if (pct < 0) {
+        leaderAlert = `⚠ 主线龙头 ${label} 今日断板回落 ${pct.toFixed(1)}%——赚钱效应收缩，注意分歧`;
+      } else {
+        leaderAlert = `主线龙头 ${label} 今日断板（+${pct.toFixed(1)}%）——梯队断层，观察低位能否承接`;
+      }
+    }
   }
 
   // 资金面 — failure degrades to a missing funds row, never kills the section.
@@ -612,6 +648,7 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
     detail: cls.detail,
     concepts: top3,
     relayHint,
+    leaderAlert,
     ...(funds ? { funds } : {}),
   };
 }
