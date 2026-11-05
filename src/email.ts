@@ -656,19 +656,27 @@ ${
   ${hotNews
     .map((a) => {
       const im = classifyHotNewsImpact(a.title, "", knownNames);
-      const impactPill = im.impact
-        ? `<span style="display:inline-block;background:${im.impact === "利好" ? "#dcfce7" : "#fee2e2"};color:${im.impact === "利好" ? "#15803d" : "#b91c1c"};font-weight:bold;padding:1px 6px;border-radius:3px;">${im.impact}</span>`
-        : "";
-      const scopeLine =
-        im.scopes.length > 0
-          ? `<div style="margin-left:12px;margin-top:2px;font-size:10px;color:${S.muted};">${impactPill}${impactPill ? " " : ""}<span>影响：${im.scopes.join(" · ")}</span></div>`
+      // Plain prose, one phrase per scope joined by ；: 利好大盘；利好银行板块.
+      const scopeText = (s: string): string =>
+        s === "大盘"
+          ? "大盘"
+          : s.startsWith("板块 ")
+            ? `${s.slice(3)}板块`
+            : s.startsWith("概念 ")
+              ? `${s.slice(3)}概念`
+              : s.startsWith("个股 ")
+                ? s.slice(3)
+                : s;
+      const impactLine =
+        im.impact && im.scopes.length > 0
+          ? `<div style="margin-left:12px;margin-top:2px;font-size:10px;color:${S.muted};">${im.scopes.map((s) => `${im.impact}${scopeText(s)}`).join("；")}</div>`
           : "";
       return `
   <div style="margin-bottom:8px;font-size:12px;">
     <span style="color:${S.muted};font-size:11px;">${a.publishedAt.slice(11, 16)}</span>
     ${a.url ? `<a href="${a.url}" style="color:${S.blue};text-decoration:none;">${a.title}</a>` : `<span>${a.title}</span>`}
     <span style="color:${S.muted};font-size:11px;"> — ${a.source}</span>
-    ${scopeLine}
+    ${impactLine}
   </div>`;
     })
     .join("")}

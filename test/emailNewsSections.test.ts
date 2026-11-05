@@ -66,10 +66,10 @@ describe("buildEmailHtml news sections", () => {
     assert.ok(html.includes("19:30"), "hot news shows its time");
   });
 
-  it("annotates each hot flash with impact and scope", () => {
+  it("annotates each hot flash with plain 利好大盘 phrasing", () => {
     const html = buildEmailHtml(report, news, aiRecs, {}, priceData, [], hotNews);
-    assert.ok(html.includes("利好"), "bullish pill present");
-    assert.ok(html.includes("影响：大盘"), "scope line present");
+    assert.ok(html.includes("利好大盘"), "plain-text scope phrasing");
+    assert.ok(!html.includes("影响："), "no wrapper label");
   });
 
   it("shows current price on AI cards", () => {
