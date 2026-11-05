@@ -21,6 +21,7 @@ import { fetchNationalTeamFlags } from "./fetchHolderFlags.js";
 import { fetchStockBoards } from "./fetchBoards.js";
 import { getLongTermLabels } from "./stockLabels.js";
 import { fetchMarketSentiment } from "./marketSentiment.js";
+import { sendQQDigest } from "./qqNotify.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -581,6 +582,14 @@ try {
     // a new ticker is looked up once, cached, reused until expiry.
     const longTermLabels = getLongTermLabels(tickers, prices, boards);
     await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards, longTermLabels, sentiment);
+    // QQ 官方机器人第二通道 — enabled only when QQ_BOT_APPID/SECRET/OPENID are
+    // all set; best-effort, the email above stays the authoritative delivery.
+    try {
+      const qqOk = await sendQQDigest({ report, aiRecs, sentiment });
+      if (qqOk) console.log("QQ digest pushed");
+    } catch (err) {
+      console.warn(`⚠ QQ push failed (email unaffected): ${(err as Error).message}`);
+    }
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);
     } catch (err) {
