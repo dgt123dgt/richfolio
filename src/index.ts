@@ -21,7 +21,14 @@ import { fetchNationalTeamFlags } from "./fetchHolderFlags.js";
 import { fetchStockBoards } from "./fetchBoards.js";
 import { getLongTermLabels } from "./stockLabels.js";
 import { fetchMarketSentiment } from "./marketSentiment.js";
-import { sendQQDigest } from "./qqNotify.js";
+import { sendQQText, buildEveningDigest, buildIntradayDigest } from "./qqNotify.js";
+import {
+  executeDailyTrades,
+  snapshotAndSummarize,
+  type PaperSummary,
+  type ExecutedTrade,
+} from "./paperTrading.js";
+import { sendIntradayBrief } from "./email.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -253,6 +260,51 @@ async function runCryptoMode(): Promise<void> {
   // against the same reference point rather than ratcheting after each alert.
 }
 
+/** Legacy intraday baseline comparison — alert email/Telegram/social only when signals strengthen. */
+async function runBaselineComparison(input: {
+  aiRecs: AIBuyRecommendation[];
+  prices: Record<string, QuoteData>;
+  report: AllocationReport;
+  baseline: NonNullable<ReturnType<typeof loadBaseline>>;
+}): Promise<void> {
+  // Build price map for comparison — must include watch-list tickers, or the
+  // frozen-data guard fails open for them (see buildPriceMap).
+  const priceMap = buildPriceMap(input.report);
+  const alerts = compareWithBaseline(input.aiRecs, priceMap, input.baseline, intradayConfig);
+
+  if (alerts.length === 0) {
+    console.log("No signals strengthened — no alert needed");
+    return;
+  }
+  console.log(`\n${alerts.length} signal(s) strengthened:`);
+  for (const a of alerts) {
+    console.log(
+      `  ${a.ticker}: ${a.morningAction} ${a.morningConfidence}% → ${a.currentAction} ${a.currentConfidence}% (${a.triggerType})`,
+    );
+  }
+
+  await sendIntradayAlert(alerts);
+  try {
+    await sendIntradayTelegram(alerts);
+  } catch (err) {
+    console.error("Telegram send failed:", (err as Error).message);
+  }
+  try {
+    await sendSocialPosts(intradayAlertsToSignals(alerts), "intraday");
+  } catch (err) {
+    console.error("Social post failed:", (err as Error).message);
+  }
+
+  // Update baseline so next intraday check compares against post-alert state
+  saveBaseline({
+    timestamp: new Date().toISOString(),
+    date: new Date().toISOString().slice(0, 10),
+    recommendations: input.aiRecs,
+    prices: priceMap,
+  });
+  console.log("Baseline updated after alert — next check will use current values");
+}
+
 const isWeekly = process.argv.includes("--weekly");
 const isIntraday = process.argv.includes("--intraday");
 const isCrypto = process.argv.includes("--crypto");
@@ -455,70 +507,52 @@ try {
     );
     await sendWeeklyReview(review);
   } else if (isIntraday) {
-    // Intraday mode: compare against morning baseline, alert on strengthening
+    // Intraday mode (10:00 / 13:00 北京时间): 盘中简报 — 大盘情绪 + AI 推荐 +
+    // 模拟盘盈亏（QQ + 简化 HTML 邮件）。不执行交易：撮合只发生在盘后日线。
+    // 之后保留原有 baseline 比对告警（信号增强时才发）。
     console.log("\nMode: intraday check");
-
-    if (!intradayConfig.enabled) {
-      console.log("Intraday alerts disabled in config — exiting");
-      process.exit(0);
-    }
-
-    const baseline = loadBaseline();
-    if (!baseline) {
-      console.log("No morning baseline found for today — skipping intraday check");
-      process.exit(0);
-    }
 
     // Run AI analysis WITHOUT news (saves NewsAPI quota), WITH technicals
     const emptyNews: Record<string, NewsItem[]> = {};
-    const technicals = await fetchTechnicals(tickers, prices, fxRates);
+    const [technicals, sentiment] = await Promise.all([
+      fetchTechnicals(tickers, prices, fxRates),
+      fetchMarketSentiment().catch((err) => {
+        console.warn(`⚠ Market sentiment fetch failed: ${(err as Error).message}`);
+        return null;
+      }),
+    ]);
     const aiRecs = await aiAnalyze(report, prices, emptyNews, technicals, macroContext);
 
     // Generate detailed analysis + "More Details" URLs for STRONG BUY tickers
     await enrichStrongBuysWithAnalysis(aiRecs, prices, technicals, report, macroContext);
 
-    if (aiRecs.length === 0) {
-      console.log("AI analysis returned no results — skipping comparison");
-      process.exit(0);
+    try {
+      const cnyPrices: Record<string, number> = {};
+      for (const q of Object.values(prices)) {
+        if (/\.(SS|SZ)$/i.test(q.ticker) && q.currency === "CNY") cnyPrices[q.ticker] = q.price;
+      }
+      const paper = snapshotAndSummarize({ prices: cnyPrices });
+      const qqOk = await sendQQText(buildIntradayDigest({ sentiment, aiRecs, paper }));
+      if (qqOk) console.log("QQ intraday digest pushed");
+      await sendIntradayBrief({ sentiment, aiRecs, paper });
+    } catch (err) {
+      console.warn(`⚠ Intraday brief push failed: ${(err as Error).message}`);
     }
 
-    // Build price map for comparison — must include watch-list tickers, or the
-    // frozen-data guard fails open for them (see buildPriceMap).
-    const priceMap = buildPriceMap(report);
-
-    const alerts = compareWithBaseline(aiRecs, priceMap, baseline, intradayConfig);
-
-    if (alerts.length === 0) {
-      console.log("No signals strengthened — no alert needed");
+    if (intradayConfig.enabled) {
+      const baseline = loadBaseline();
+      if (!baseline) {
+        console.log("No morning baseline found for today — skipping signal comparison");
+      } else if (aiRecs.length === 0) {
+        console.log("AI analysis returned no results — skipping comparison");
+      } else {
+        runBaselineComparison({ aiRecs, prices, report, baseline });
+      }
     } else {
-      console.log(`\n${alerts.length} signal(s) strengthened:`);
-      for (const a of alerts) {
-        console.log(
-          `  ${a.ticker}: ${a.morningAction} ${a.morningConfidence}% → ${a.currentAction} ${a.currentConfidence}% (${a.triggerType})`,
-        );
-      }
-
-      await sendIntradayAlert(alerts);
-      try {
-        await sendIntradayTelegram(alerts);
-      } catch (err) {
-        console.error("Telegram send failed:", (err as Error).message);
-      }
-      try {
-        await sendSocialPosts(intradayAlertsToSignals(alerts), "intraday");
-      } catch (err) {
-        console.error("Social post failed:", (err as Error).message);
-      }
-
-      // Update baseline so next intraday check compares against post-alert state
-      saveBaseline({
-        timestamp: new Date().toISOString(),
-        date: new Date().toISOString().slice(0, 10),
-        recommendations: aiRecs,
-        prices: priceMap,
-      });
-      console.log("Baseline updated after alert — next check will use current values");
+      console.log("Intraday alerts disabled in config — brief sent, comparison skipped");
     }
+    console.log("\nDone.");
+    process.exit(0);
   } else {
     // Daily mode: full brief with news + AI + technicals
     const [news, technicals, hotNews, nationalTeam, boards, sentiment] = await Promise.all([
@@ -582,13 +616,38 @@ try {
     // a new ticker is looked up once, cached, reused until expiry.
     const longTermLabels = getLongTermLabels(tickers, prices, boards);
     await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards, longTermLabels, sentiment);
+
+    // 模拟盘：AI 建议按当日收盘价撮合，SQLite 记账（按交易日幂等，本地/云端
+    // 谁先跑谁成交，重复运行不会重复下单）。仅 A 股参与，资金为人民币。
+    let paper: PaperSummary | null = null;
+    let todayTrades: ExecutedTrade[] = [];
+    try {
+      const cnyPrices: Record<string, number> = {};
+      for (const q of Object.values(prices)) {
+        if (/\.(SS|SZ)$/i.test(q.ticker) && q.currency === "CNY") cnyPrices[q.ticker] = q.price;
+      }
+      const exec = executeDailyTrades({ prices: cnyPrices, aiRecs, sentiment });
+      todayTrades = exec.trades;
+      paper = snapshotAndSummarize({ prices: cnyPrices });
+      console.log(
+        `Paper trading: ${exec.skipped ? "already filled today (skipped)" : `${exec.trades.length} trade(s)`} — cash ¥${paper.cash}, position ${paper.positionPct}%, month P&L ¥${paper.pnlMonth}`,
+      );
+    } catch (err) {
+      console.warn(`⚠ Paper trading failed (email/QQ unaffected): ${(err as Error).message}`);
+    }
+
     // QQ 官方机器人第二通道 — enabled only when QQ_BOT_APPID/SECRET/OPENID are
     // all set; best-effort, the email above stays the authoritative delivery.
-    try {
-      const qqOk = await sendQQDigest({ report, aiRecs, sentiment, hotNews });
-      if (qqOk) console.log("QQ digest pushed");
-    } catch (err) {
-      console.warn(`⚠ QQ push failed (email unaffected): ${(err as Error).message}`);
+    // 盘后版只说三件事：今天情绪怎么样 / 模拟盘仓位与操作 / 盈亏.
+    if (paper) {
+      try {
+        const qqOk = await sendQQText(
+          buildEveningDigest({ sentiment, paper, trades: todayTrades }),
+        );
+        if (qqOk) console.log("QQ digest pushed");
+      } catch (err) {
+        console.warn(`⚠ QQ push failed (email unaffected): ${(err as Error).message}`);
+      }
     }
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);

@@ -17,12 +17,14 @@
 // affected by QQ-side problems.
 
 import { defaultCurrency, displayName } from "./config.js";
-import type { AllocationReport } from "./analyze.js";
 import type { AIBuyRecommendation } from "./aiAnalysis.js";
 import type { MarketSentiment } from "./marketSentiment.js";
-import type { NewsItem } from "./fetchNews.js";
-import { classifyHotNewsImpact } from "./hotNewsImpact.js";
 import { formatMoney } from "./util.js";
+import {
+  formatTrade,
+  type ExecutedTrade,
+  type PaperSummary,
+} from "./paperTrading.js";
 
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
 const MSG_URL = (openid: string) =>
@@ -44,94 +46,97 @@ export function qqBotConfigFromEnv(): QQBotConfig | null {
 }
 
 // ── Digest building (pure, tested) ──────────────────────────────────
+// Two deliberately SHORT digests per the user's brief:
+//   • evening (22:00): 大盘情绪一句话 + 模拟盘仓位/操作 + 盈亏
+//   • intraday (10:00/13:00): 大盘情绪 + AI 推荐 + 持仓盈亏
+// The long sectioned brief lives in the email; QQ only carries the essence.
 
-const section = (title: string): string =>
-  `\n〔${title}〕`;
+const money = (x: number): string => `¥${Math.round(x).toLocaleString("en-US")}`;
 
-export function buildBriefDigest(input: {
-  report: Pick<AllocationReport, "totalCurrentValue" | "items">;
-  aiRecs: AIBuyRecommendation[];
-  sentiment: MarketSentiment | null;
-  hotNews?: NewsItem[];
-  date: Date;
-}): string {
-  const lines: string[] = [];
-  const d = input.date;
-  lines.push(
-    `【Richfolio 每日简报】${d.getMonth() + 1}/${d.getDate()}`,
+const pct = (x: number | null): string =>
+  x == null ? "—" : `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
+
+export function sentimentLine(s: MarketSentiment | null): string {
+  if (!s) return "情绪:数据缺失";
+  const m = s.metrics;
+  const zbRate =
+    m.ztCount + m.zbCount > 0 ? (m.zbCount / (m.ztCount + m.zbCount)) * 100 : 0;
+  return (
+    `情绪:${s.phase}(命中${s.matches}/6) 涨停${m.ztCount}家 最高${m.maxLbc}板 ` +
+    `晋级${(m.promoteRate * 100).toFixed(0)}% 炸板${zbRate.toFixed(0)}%｜仓位建议:${s.positionHint.replace("仓位 ", "")}`
   );
+}
 
-  if (input.sentiment) {
-    const s = input.sentiment;
-    const m = s.metrics;
-    const zbRate =
-      m.ztCount + m.zbCount > 0 ? (m.zbCount / (m.ztCount + m.zbCount)) * 100 : 0;
-    lines.push(`${section("市场情绪")}`);
+export function paperLine(p: PaperSummary): string {
+  const held = p.holdings
+    .map((h) => `${h.name}(${pct(h.pnlPct)})`)
+    .join("、");
+  return (
+    `模拟仓:总${money(p.total)} 仓位${p.positionPct.toFixed(0)}% ` +
+    `盈亏:今日${pct(p.pnlDayPct)} 本月${pct(p.pnlMonthPct)}(${p.pnlMonth >= 0 ? "+" : ""}${Math.round(p.pnlMonth)}元)` +
+    (held ? `｜持仓:${held}` : "｜空仓")
+  );
+}
+
+/** 22:00 盘后简报 — 情绪 + 当日模拟操作 + 盈亏. */
+export function buildEveningDigest(input: {
+  sentiment: MarketSentiment | null;
+  paper: PaperSummary;
+  trades: ExecutedTrade[];
+  date?: Date;
+}): string {
+  const d = input.date ?? new Date();
+  const lines: string[] = [
+    `【盘后简报】${d.getMonth() + 1}/${d.getDate()}`,
+    sentimentLine(input.sentiment),
+  ];
+  const top = input.sentiment?.concepts[0];
+  if (top) {
     lines.push(
-      `周期:${s.phase}(命中${s.matches}/6)｜涨停${m.ztCount}家 最高${m.maxLbc}板`,
+      `主线:${top.name}[${top.phase}]${top.leader ? ` 龙头${top.leader.name}${top.leader.lbc}板` : ""}${top.mainNet != null ? ` 主力${top.mainNet >= 0 ? "+" : ""}${top.mainNet}亿` : ""}`,
     );
-    lines.push(
-      `晋级率${(m.promoteRate * 100).toFixed(0)}% 炸板率${zbRate.toFixed(0)}% 红盘率${(m.redRate * 100).toFixed(0)}% 跌停/大面${m.bigLossCount}家`,
-    );
-    lines.push(`仓位建议:${s.positionHint.replace("仓位 ", "")}`);
-    if (s.ladderText) lines.push(`梯队:${s.ladderText}`);
-    if (s.spaceText) lines.push(`空间板:${s.spaceText}`);
-    if (s.leaderAlert) lines.push(s.leaderAlert);
-
-    if (s.funds) {
-      lines.push(`${section("资金面")}`);
-      lines.push(
-        `两市成交${s.funds.totalAmount}亿 较昨日${s.funds.amountChangePct >= 0 ? "+" : ""}${s.funds.amountChangePct}% → ${s.funds.volumeState}`,
-      );
-      lines.push(
-        `主力${s.funds.mainNet >= 0 ? "净流入 +" : "净流出 "}${Math.abs(s.funds.mainNet)}亿｜${s.funds.comment}`,
-      );
-      const ins = s.funds.inflowSectors.map((x) => `${x.name}+${x.net}亿`).join("、");
-      const outs = s.funds.outflowSectors.map((x) => `${x.name}${x.net}亿`).join("、");
-      if (ins) lines.push(`流入:${ins}`);
-      if (outs) lines.push(`流出:${outs}`);
-    }
-
-    if (s.concepts.length > 0) {
-      lines.push(`${section("热门题材")}`);
-      s.concepts.forEach((c, i) => {
-        lines.push(
-          `${i + 1}.${c.name}[${c.phase}] 涨停${c.ztCount}家 最高${c.maxLbc}板 溢价${c.premium >= 0 ? "+" : ""}${c.premium.toFixed(1)}%${c.mainNet != null ? ` 主力${c.mainNet >= 0 ? "+" : ""}${c.mainNet}亿` : ""}${c.leader ? ` 龙头:${c.leader.name}(${c.leader.lbc}板)` : ""}${c.volumeState ? ` ${c.volumeState}${(c.amountChangePct ?? 0) >= 0 ? "+" : ""}${c.amountChangePct}%` : ""}`,
-        );
-        if (c.buyers) lines.push(`  谁在买:${c.buyers}`);
-      });
-      for (const t of s.tomorrowScenarios) lines.push(`▪明日:${t}`);
-    }
   }
+  if (input.sentiment?.leaderAlert) lines.push(input.sentiment.leaderAlert);
+  lines.push(paperLine(input.paper));
+  lines.push(
+    `今日操作:${input.trades.length > 0 ? input.trades.map(formatTrade).join("；") : "无（观望）"}`,
+  );
+  return lines.filter(Boolean).join("\n");
+}
 
-  if (input.hotNews && input.hotNews.length > 0) {
-    lines.push(`${section("市场热点")}`);
-    for (const a of input.hotNews.slice(0, 3)) {
-      const im = classifyHotNewsImpact(a.title, "", []);
-      const impact = im.impact ? `${im.impact}${im.scopes.length > 0 ? "(大盘)" : ""}` : "";
-      lines.push(`• ${impact ? `[${impact}] ` : ""}${a.title.slice(0, 40)}`);
-    }
-  }
-
+/** 10:00 / 13:00 盘中快报 — 情绪 + AI 推荐 + 持仓盈亏. */
+export function buildIntradayDigest(input: {
+  sentiment: MarketSentiment | null;
+  aiRecs: AIBuyRecommendation[];
+  paper: PaperSummary;
+  date?: Date;
+}): string {
+  const d = input.date ?? new Date();
+  const hhmm = d
+    .toLocaleTimeString("sv-SE", { timeZone: "Asia/Shanghai", hour12: false })
+    .slice(0, 5);
+  const lines: string[] = [
+    `【盘中快报】${d.getMonth() + 1}/${d.getDate()} ${hhmm}(北京时间)`,
+    sentimentLine(input.sentiment),
+  ];
   const buys = input.aiRecs
     .filter((r) => r.action === "STRONG BUY" || r.action === "BUY")
     .slice(0, 4);
   if (buys.length > 0) {
-    lines.push(`${section("AI 推荐")}`);
-    for (const r of buys) {
-      const buyTxt = r.suggestedBuyValue > 0 ? ` 建议${formatMoney(r.suggestedBuyValue, r.quoteCurrency ?? defaultCurrency)}` : "";
-      lines.push(
-        `${r.action === "STRONG BUY" ? "★" : "·"}${displayName(r.ticker, r.tickerFullName)} ${r.action}(${r.confidence}%)${buyTxt}`,
-      );
-      if (r.reason) lines.push(`  理由:${r.reason.replace(/\n/g, " ").slice(0, 60)}…`);
-    }
+    lines.push(
+      `AI推荐:${buys
+        .map(
+          (r) =>
+            `${r.action === "STRONG BUY" ? "★" : ""}${displayName(r.ticker, r.tickerFullName)}(${r.confidence}%)`,
+        )
+        .join("、")}`,
+    );
+    const first = buys[0];
+    if (first?.reason) lines.push(`  首选理由:${first.reason.replace(/\n/g, " ").slice(0, 80)}`);
+  } else {
+    lines.push("AI推荐:今日暂无买入级标的");
   }
-
-  lines.push(`${section("持仓")}`);
-  lines.push(
-    `持仓市值:${formatMoney(input.report.totalCurrentValue, defaultCurrency)}（${input.report.items.length} 只标的）`,
-  );
-
+  lines.push(paperLine(input.paper));
   return lines.filter(Boolean).join("\n");
 }
 
@@ -173,20 +178,13 @@ async function fetchAccessToken(cfg: QQBotConfig): Promise<string> {
 }
 
 /**
- * Push the digest. Returns true when every chunk was accepted; false when QQ
- * rejected anything (caller logs; email remains the authoritative channel).
+ * Push any plain text (chunked). Returns true when every chunk was accepted;
+ * false when QQ rejected anything (caller logs; email remains authoritative).
  */
-export async function sendQQDigest(input: {
-  report: Pick<AllocationReport, "totalCurrentValue" | "items">;
-  aiRecs: AIBuyRecommendation[];
-  sentiment: MarketSentiment | null;
-  hotNews?: NewsItem[];
-  date?: Date;
-}): Promise<boolean> {
+export async function sendQQText(text: string): Promise<boolean> {
   const cfg = qqBotConfigFromEnv();
   if (!cfg) return false;
 
-  const text = buildBriefDigest({ ...input, date: input.date ?? new Date() });
   const chunks = chunkText(text);
   const token = await fetchAccessToken(cfg);
 

@@ -39,12 +39,12 @@ time awaiting `fetch()` toward CPU time, and this Worker only builds a small JSO
 
 ## Schedule
 
-| Cron (UTC)                  | Dispatches | Local (AEST)                       |
-| --------------------------- | ---------- | ---------------------------------- |
-| `0 22 * * *`                | `daily`    | 8:00am                             |
-| `30 22 * * SUN`             | `weekly`   | Monday 8:30am                      |
-| `15 3,7,11,14 * * MON-FRI`  | `intraday` | 1:15pm / 5:15pm / 9:15pm / 12:15am |
-| `0 */3 * * *`               | `crypto`   | every 3 hours                      |
+| Cron (UTC)                  | Dispatches | Local (Beijing)          |
+| --------------------------- | ---------- | ------------------------ |
+| `0 14 * * MON-FRI`          | `daily`    | 22:00 盘后简报            |
+| `30 22 * * SUN`             | `weekly`   | Monday 6:30am            |
+| `0 2,5 * * MON-FRI`         | `intraday` | 10:00 / 13:00 盘中快报     |
+| `0 */3 * * *`               | `crypto`   | every 3 hours            |
 
 > ⚠️ **Day-of-week is spelled, never numbered.** Cloudflare follows Quartz: **`1` = Sunday**,
 > `7` = Saturday — where Unix cron has `1` = Monday. A numeric `1-5` therefore means **Sun–Thu**,
@@ -52,9 +52,9 @@ time awaiting `fetch()` toward CPU time, and this Worker only builds a small JSO
 > is rejected outright, so the wrong-by-one-day case is the one that reaches production.
 > `test/scheduler.test.ts` fails the build on any numeric day-of-week.
 
-The four intraday runs were collapsed from four separate GitHub crons (3:15/7:00/10:45/14:30) into
-one expression to stay inside the 5-trigger budget. Minute `:15` keeps them clear of the crypto
-schedule's `:00` slots, as the original spacing did.
+The intraday slots serve the A-share 盘中快报 (情绪 + AI 推荐 + 模拟盘盈亏) at 10:00 and 13:00
+Beijing; the daily slot moved to 22:00 Beijing (A-share 盘后) and is where the paper-trading
+book gets filled at close prices.
 
 Each event type **is** the run mode: the workflows filter on it via `repository_dispatch.types` and
 read `github.event.action` in their "Determine mode" step.

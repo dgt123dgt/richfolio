@@ -24,9 +24,9 @@
   // docs recommend the abbreviations to avoid this.
   "triggers": {
     "crons": [
-      "0 22 * * *", // daily brief      — 8:00am AEST
+      "0 14 * * MON-FRI", // daily brief     — 22:00 Beijing (盘后)
       "30 22 * * SUN", // weekly report    — Monday 8:30am AEST
-      "15 0,3,6,14 * * MON-FRI" // intraday checks  — 8:15am/11:15am/2:15pm/10:15pm Beijing
+      "0 2,5 * * MON-FRI" // intraday briefs — 10:00 / 13:00 Beijing
     ]
   },
 

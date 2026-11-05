@@ -67,6 +67,10 @@ env:
 jobs:
   send-brief:
     runs-on: ubuntu-latest
+    # contents: write lets the daily step commit the paper-trading DB back —
+    # the only durable store across ephemeral runners.
+    permissions:
+      contents: write
     # The subscription transport spawns a Claude Code subprocess per AI stage,
     # which runs far longer than the 1-2 minutes the api-key path took. A full
     # daily run has been observed taking 40+ minutes even while failing
@@ -146,6 +150,28 @@ jobs:
           LINKEDIN_ORG_URN: ${{ secrets.LINKEDIN_ORG_URN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          # QQ 官方机器人推送（可选 — 缺任一则自动跳过）
+          QQ_BOT_APPID: ${{ secrets.QQ_BOT_APPID }}
+          QQ_BOT_SECRET: ${{ secrets.QQ_BOT_SECRET }}
+          QQ_BOT_OPENID: ${{ secrets.QQ_BOT_OPENID }}
+          # 模拟盘（可选 — 默认每月 ¥20,000）
+          PAPER_MONTHLY_CAPITAL: ${{ vars.PAPER_MONTHLY_CAPITAL }}
+
+      # Persist the paper-trading book: Actions runners are ephemeral, so the
+      # SQLite DB is committed back to the repo after the daily fill. Needs the
+      # job-level `permissions: contents: write` below.
+      - name: Commit paper-trading DB
+        if: steps.mode.outputs.mode == 'daily'
+        run: |
+          git config user.name "richfolio-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/paper-trading.db
+          if git diff --cached --quiet; then
+            echo "Paper-trading DB unchanged — nothing to commit"
+          else
+            git commit -m "chore(paper): update paper-trading DB ($(date -u +%F))"
+            git push
+          fi
 
       # Weekly rebalancing report
       - run: npm run weekly
@@ -187,6 +213,11 @@ jobs:
           LINKEDIN_ORG_URN: ${{ secrets.LINKEDIN_ORG_URN }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          # 盘中简报 QQ 推送（可选）
+          QQ_BOT_APPID: ${{ secrets.QQ_BOT_APPID }}
+          QQ_BOT_SECRET: ${{ secrets.QQ_BOT_SECRET }}
+          QQ_BOT_OPENID: ${{ secrets.QQ_BOT_OPENID }}
+          PAPER_MONTHLY_CAPITAL: ${{ vars.PAPER_MONTHLY_CAPITAL }}
 
       # Refresh analysis for a single ticker
       - run: npm run refresh -- ${{ github.event.inputs.ticker }}

@@ -53,26 +53,20 @@
  * reaches crypto-monitor.yml with no routing logic here.
  */
 export const TRIGGERS = {
-  // 8:00am AEST. The one genuinely time-anchored run: it writes the morning
-  // baseline that every intraday comparison is measured against.
-  "0 22 * * *": "daily",
+  // 22:00 Beijing = 14:00 UTC, weekdays — A-share 盘后 daily brief. Writes the
+  // baseline the intraday comparisons measure against, and fills the paper-
+  // trading book at close prices.
+  "0 14 * * MON-FRI": "daily",
 
-  // Sunday 22:30 UTC = Monday 8:30am AEST. Deliberately 30min after the daily
-  // rather than sharing its slot, so the two never run concurrently against the
-  // same state/ cache.
-  //
-  // This replaces portfolio-monitor.yml's old `send-weekly` job, which ran on
-  // every schedule tick and decided by asking the RUNNER for the weekday
-  // (`date -u +%u`). Drift silently broke that: a Sunday 22:00 cron delivered
-  // at Monday 03:00 UTC computes day=1 and skips the weekly entirely. Naming
-  // the mode in the dispatch removes the guesswork.
+  // Sunday 22:30 UTC. Deliberately 30min after the old daily slot rather than
+  // sharing one, so the two never run concurrently against the same state/
+  // cache.
   "30 22 * * SUN": "weekly",
 
-  // 1:15pm / 5:15pm / 9:15pm AEST, and 12:15am AEST next day. Weekdays only.
-  // Collapsed from four separate GitHub crons (3:15/7:00/10:45/14:30) into one
-  // expression to stay inside the 5-trigger free-plan budget. Minute :15 keeps
-  // them off the crypto schedule's :00 slots, as the original spacing did.
-  "15 0,3,6,14 * * MON-FRI": "intraday",
+  // 10:00 / 13:00 Beijing = 02:00 / 05:00 UTC, weekdays — A-share 盘中 briefs
+  // (情绪 + AI 推荐 + 模拟盘盈亏). One expression keeps the 5-trigger
+  // free-plan budget.
+  "0 2,5 * * MON-FRI": "intraday",
 };
 
 const GITHUB_API = "https://api.github.com";

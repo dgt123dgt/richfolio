@@ -11,6 +11,10 @@ import type { LongTermLabel } from "./stockLabels.js";
 import type { MarketSentiment, ConceptScore, MarketPhase } from "./marketSentiment.js";
 import { escapeHtmlAttr, formatMoney } from "./util.js";
 import { hasStrongBuyVote } from "./aiAggregation.js";
+import type { PaperSummary } from "./paperTrading.js";
+
+const MONTHLY_CAPITAL_LABEL =
+  (Number(process.env.PAPER_MONTHLY_CAPITAL ?? 20_000)).toLocaleString("en-US");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -1246,4 +1250,107 @@ export async function sendBrief(
   }
 
   console.log(`Email sent to ${recipientEmail}`);
+}
+
+// ── 盘中简报 (10:00 / 13:00) — 情绪 + AI 推荐 + 模拟盘盈亏 ───────────
+// Deliberately compact: the full daily template stays 22:00-only.
+
+export async function sendIntradayBrief(input: {
+  sentiment: MarketSentiment | null;
+  aiRecs: AIBuyRecommendation[];
+  paper: PaperSummary;
+}): Promise<void> {
+  const now = new Date()
+    .toLocaleTimeString("sv-SE", { timeZone: "Asia/Shanghai", hour12: false })
+    .slice(0, 5);
+  const s = input.sentiment;
+  const m = s?.metrics;
+  const zbRate =
+    m && m.ztCount + m.zbCount > 0 ? (m.zbCount / (m.ztCount + m.zbCount)) * 100 : 0;
+
+  const buys = input.aiRecs
+    .filter((r) => r.action === "STRONG BUY" || r.action === "BUY")
+    .slice(0, 5);
+
+  const paperRows = input.paper.holdings
+    .map(
+      (h) => `
+    <tr>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};font-weight:bold;color:#1a202c;">${h.name}<span style="font-size:9px;color:${S.muted};font-weight:normal;">　${h.ticker}</span></td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${h.shares} 股</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">¥${h.price.toFixed(2)}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${h.pnlPct >= 0 ? "#b91c1c" : "#15803d"};">${h.pnlPct >= 0 ? "+" : ""}${h.pnlPct.toFixed(2)}%</td>
+    </tr>`,
+    )
+    .join("");
+
+  const html = `
+<html><body style="margin:0;background:${S.bg};font-family:'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:16px;">
+<table width="640" cellpadding="0" cellspacing="0" style="background:${S.cardBg};border-radius:12px;overflow:hidden;">
+<tr><td style="padding:20px 24px 8px;background:${S.cardBg};">
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">盘中快报 · ${now}（北京时间）</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">只看两件事：大盘情绪 + AI 推荐。完整简报在每晚 22:00。</p>
+</td></tr>
+<tr><td style="padding:12px 24px;background:${S.cardBg};">
+  ${
+    s && m
+      ? `<div style="font-size:13px;font-weight:bold;color:#1a202c;">大盘情绪：${s.phase}（命中 ${s.matches}/6）</div>
+  <p style="margin:4px 0 0;font-size:12px;color:#1a202c;">涨停 ${m.ztCount} 家 · 最高 ${m.maxLbc} 板 · 晋级率 ${(m.promoteRate * 100).toFixed(0)}% · 炸板率 ${zbRate.toFixed(0)}% · 大面 ${m.bigLossCount} 家</p>
+  <p style="margin:4px 0 0;font-size:12px;color:${S.blue};">${s.positionHint}</p>
+  ${s.leaderAlert ? `<p style="margin:4px 0 0;font-size:11px;color:${s.leaderAlert.startsWith("⚠") ? "#b91c1c" : "#1a202c"};">${s.leaderAlert}</p>` : ""}
+  ${s.relayHint ? `<p style="margin:4px 0 0;font-size:11px;color:${S.blue};">${s.relayHint}</p>` : ""}`
+      : `<p style="margin:0;font-size:12px;color:${S.muted};">今日情绪数据缺失</p>`
+  }
+</td></tr>
+<tr><td style="padding:8px 24px 12px;background:${S.cardBg};">
+  <div style="font-size:13px;font-weight:bold;color:${S.blue};margin-bottom:6px;">AI 推荐</div>
+  ${
+    buys.length > 0
+      ? buys
+          .map(
+            (r) => `
+  <div style="padding:8px 0;border-bottom:1px solid ${S.border};">
+    <span style="font-weight:bold;font-size:13px;color:#1a202c;">${displayName(r.ticker, r.tickerFullName)}</span>
+    <span style="font-size:10px;color:${S.muted};margin-left:6px;">${r.ticker}</span>
+    &nbsp;${actionBadge(r.action)}<span style="font-size:11px;color:${S.muted};margin-left:8px;">信心 ${r.confidence}%</span>
+    <div style="margin-top:4px;font-size:11px;color:${S.text};line-height:1.6;">${escapeHtmlAttr(r.reason.replace(/\n/g, " ")).slice(0, 160)}…</div>
+  </div>`,
+          )
+          .join("")
+      : `<p style="margin:0;font-size:12px;color:${S.muted};">今日暂无买入级标的。</p>`
+  }
+</td></tr>
+<tr><td style="padding:8px 24px 16px;background:${S.cardBg};">
+  <div style="font-size:13px;font-weight:bold;color:${S.blue};margin-bottom:6px;">模拟盘（本月 ${MONTHLY_CAPITAL_LABEL} 元）</div>
+  <p style="margin:0 0 6px;font-size:12px;color:#1a202c;">
+    总资产 <b>¥${Math.round(input.paper.total).toLocaleString("en-US")}</b> · 仓位 <b>${input.paper.positionPct.toFixed(0)}%</b>（现金 ¥${Math.round(input.paper.cash).toLocaleString("en-US")}）
+    · 今日盈亏 <b style="color:${(input.paper.pnlDayPct ?? 0) >= 0 ? "#b91c1c" : "#15803d"};">${input.paper.pnlDayPct == null ? "—" : `${input.paper.pnlDayPct >= 0 ? "+" : ""}${input.paper.pnlDayPct.toFixed(2)}%`}</b>
+    · 本月 <b style="color:${input.paper.pnlMonth >= 0 ? "#b91c1c" : "#15803d"};">${input.paper.pnlMonth >= 0 ? "+" : ""}${input.paper.pnlMonth.toFixed(2)} 元（${input.paper.pnlMonthPct >= 0 ? "+" : ""}${input.paper.pnlMonthPct.toFixed(2)}%）</b>
+  </p>
+  ${
+    paperRows
+      ? `<table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
+    <tr style="color:${S.muted};font-size:10px;"><td style="padding:4px 3px;border-bottom:1px solid ${S.border};">持仓</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">股数</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td><td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">浮盈</td></tr>
+    ${paperRows}
+  </table>`
+      : `<p style="margin:0;font-size:12px;color:${S.muted};">当前空仓。</p>`
+  }
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+
+  const { error } = await resend.emails.send({
+    from: "Richfolio <onboarding@resend.dev>",
+    to: recipientEmail,
+    subject: `Richfolio 盘中快报 ${now} — 大盘${s?.phase ?? "数据缺失"}｜模拟仓 ${input.paper.positionPct.toFixed(0)}%`,
+    html,
+  });
+
+  if (error) {
+    throw new Error(`Resend error: ${JSON.stringify(error)}`);
+  }
+
+  console.log(`Intraday brief email sent to ${recipientEmail}`);
 }
