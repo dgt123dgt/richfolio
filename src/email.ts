@@ -271,7 +271,11 @@ function buildAISection(
   aiRecs: AIBuyRecommendation[],
   technicals: Record<string, TechnicalData> = {},
   priceData: Record<string, QuoteData> = {},
+  nationalTeam: ReadonlySet<string> = new Set(),
 ): string {
+  // Global status chips next to every stock name in this section.
+  const chipsFor = (ticker: string) =>
+    renderChips(stockChips(ticker, { technicals, priceData, nationalTeam }));
   // Portfolio tickers (excludes watch list)
   const portfolioRecs = aiRecs.filter((r) => !r.isWatching);
   const actionable = portfolioRecs.filter((r) => r.action === "STRONG BUY" || r.action === "BUY");
@@ -313,7 +317,7 @@ function buildAISection(
     <div style="margin-bottom:4px;">
       <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
       <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-      &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
+      &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
       &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}${priceTag(rec.ticker)}
       ${rec.suggestedBuyValue > 0 ? `<span style="float:right;font-weight:bold;color:#1a202c;">${fmt$(rec.suggestedBuyValue)}</span>` : ""}
     </div>
@@ -343,7 +347,7 @@ function buildAISection(
         (rec) => `
     <div style="padding:4px 0;font-size:12px;">
       <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-      &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
+      &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
       <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
     </div>`,
       )
@@ -364,7 +368,7 @@ function buildAISection(
       <div style="margin-bottom:4px;">
         <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
       <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-        &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
+        &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
         &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}${priceTag(rec.ticker)}
       </div>
       <div style="font-size:12px;color:${S.text};margin-top:4px;">${rec.reason}</div>
@@ -390,7 +394,7 @@ function buildAISection(
           (rec) => `
       <div style="padding:4px 0;font-size:12px;">
         <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-        &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
+        &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
         <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
       </div>`,
         )
@@ -482,8 +486,11 @@ export function buildEmailHtml(
   // Use AI section if available, otherwise fallback to gap-based
   const buysSection =
     aiRecs.length > 0
-      ? buildAISection(aiRecs, technicals, priceData)
+      ? buildAISection(aiRecs, technicals, priceData, nationalTeam)
       : buildFallbackBuysSection(report);
+  // Same global chips for the news headers.
+  const chipsFor = (ticker: string) =>
+    renderChips(stockChips(ticker, { technicals, priceData, nationalTeam }));
 
   // Watch-only mode (no portfolio configured): the 100-stock technical screen
   // carries the whole brief, so it is rendered at the very end — after the AI
@@ -584,7 +591,7 @@ ${
     .map(
       ([ticker, articles]) => `
   <div style="margin-bottom:12px;">
-    <div style="font-weight:bold;font-size:13px;color:#1a202c;margin-bottom:4px;">${displayName(ticker)} <span style="font-size:10px;color:${S.muted};font-weight:normal;">${ticker}</span></div>
+    <div style="font-weight:bold;font-size:13px;color:#1a202c;margin-bottom:4px;">${displayName(ticker)} <span style="font-size:10px;color:${S.muted};font-weight:normal;">${ticker}</span>&nbsp;${chipsFor(ticker)}</div>
     ${articles
       .map(
         (a) => `
@@ -764,6 +771,30 @@ function statusChips(
   return chips;
 }
 
+// Everything a chip render needs. These tags are GLOBAL: any block that shows a
+// stock name — AI cards, hold rows, news headers, the technical screen — should
+// carry them so the reader never has to cross-reference the screen table.
+interface ChipContext {
+  technicals: Record<string, TechnicalData>;
+  priceData: Record<string, QuoteData>;
+  nationalTeam: ReadonlySet<string>;
+}
+
+function stockChips(ticker: string, ctx: ChipContext): StatusChip[] {
+  const t = ctx.technicals[ticker];
+  if (!t) return [];
+  return statusChips(ticker, t, ctx.priceData[ticker], ctx.nationalTeam);
+}
+
+function renderChips(chips: StatusChip[], fontSize = "9px"): string {
+  return chips
+    .map(
+      (c) =>
+        `<span style="display:inline-block;background:${c.bg};color:${c.fg};font-size:${fontSize};font-weight:bold;padding:1px 5px;border-radius:3px;margin-right:3px;">${c.text}</span>`,
+    )
+    .join("");
+}
+
 function techScreenSection(
   technicals: Record<string, TechnicalData>,
   priceData: Record<string, QuoteData>,
@@ -828,14 +859,9 @@ function techScreenSection(
 
       return `
     <tr style="${rowBg}">
-      <td style="padding:4px 3px;${rowBorder}border-bottom:1px solid ${S.border};font-weight:bold;">${displayName(ticker)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${ticker}</div>${
+      <td style="padding:4px 3px;      ${
         chips.length > 0
-          ? `<div style="margin-top:2px;">${chips
-              .map(
-                (c) =>
-                  `<span style="display:inline-block;background:${c.bg};color:${c.fg};font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-right:3px;">${c.text}</span>`,
-              )
-              .join("")}</div>`
+          ? `<div style="margin-top:2px;">${renderChips(chips)}</div>`
           : ""
       }</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;${accent ? `color:${accent.fg};font-weight:bold;` : ""}">${price != null ? fmt$(price) : "—"}</td>

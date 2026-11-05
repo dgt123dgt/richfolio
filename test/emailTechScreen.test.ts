@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildEmailHtml } from "../src/email.js";
 import type { AllocationReport } from "../src/allocation.js";
+import type { AIBuyRecommendation } from "../src/providers/types.js";
 import type { TechnicalData } from "../src/technicals.js";
 import type { QuoteData } from "../src/fetchPrices.js";
 import type { NewsItem } from "../src/fetchNews.js";
@@ -215,5 +216,42 @@ describe("hot-stock technical screen", () => {
     assert.ok(!html.includes("#f5f3ff"), "no demon tint");
     assert.ok(!html.includes("#fffbeb"), "no white-horse tint");
     assert.ok(html.includes("可关注"));
+  });
+
+  it("carries the same chips everywhere the stock name appears in the brief", () => {
+    const rec = {
+      ticker: "600519.SS",
+      tickerFullName: null,
+      originalCurrency: "CNY",
+      action: "BUY",
+      confidence: 80,
+      reason: "测试理由",
+      suggestedBuyValue: 0,
+      isWatching: true,
+    };
+    const news = {
+      "600519.SS": [
+        { title: "标题", url: "https://example.com", source: "证券时报", publishedAt: "" },
+      ],
+    };
+    const html = buildEmailHtml(
+      report,
+      news,
+      [rec as AIBuyRecommendation],
+      { "600519.SS": tech({ ticker: "600519.SS", priceChange1d: 1, yearGainPct: 150, limitUpDays2y: 20 }) },
+      { "600519.SS": quote({ ticker: "600519.SS" }) },
+      [],
+      hotNews,
+      new Set(["600519.SS"]),
+    );
+    // AI card + news header + technical-screen row must all carry the tags.
+    const oldLeaderCount = html.split("老龙头").length - 1;
+    const nationalTeamCount = html.split("国家队").length - 1;
+    assert.ok(oldLeaderCount >= 3, `老龙头 should appear ≥3 times, got ${oldLeaderCount}`);
+    assert.ok(nationalTeamCount >= 3, `国家队 should appear ≥3 times, got ${nationalTeamCount}`);
+    // The AI section (before the news block) must already carry the chips.
+    const aiRegion = html.slice(0, html.indexOf("推荐买入标的的相关新闻"));
+    assert.ok(aiRegion.includes("老龙头"), "chip renders on the AI card");
+    assert.ok(aiRegion.includes("国家队"), "national-team chip renders on the AI card");
   });
 });
