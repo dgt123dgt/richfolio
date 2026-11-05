@@ -342,14 +342,18 @@ function buildAISection(
 
   const actionableCard = (rec: AIBuyRecommendation): string => `
   <div style="padding:10px 0;border-bottom:1px solid ${S.border};">
-    <div style="margin-bottom:4px;">
-      <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
-      <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-      &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
-      &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}${priceTag(rec.ticker)}
-      ${rec.suggestedBuyValue > 0 ? `<span style="float:right;font-weight:bold;color:#1a202c;">${fmt$(rec.suggestedBuyValue)}</span>` : ""}
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:6px;"><tr>
+      <td>
+        <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
+        <span style="font-size:10px;color:${S.muted};margin-left:6px;">${rec.ticker}</span>
+      </td>
+      <td align="right" style="white-space:nowrap;">${rec.suggestedBuyValue > 0 ? `<span style="font-weight:bold;color:#1a202c;margin-right:10px;">${fmt$(rec.suggestedBuyValue)}</span>` : ""}${priceTag(rec.ticker)}</td>
+    </tr></table>
+    <div style="line-height:2;margin-bottom:4px;">
+      ${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
+      &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}
     </div>
-    <div style="font-size:12px;color:${S.text};margin-top:4px;">${zh(rec.reason)}</div>
+    <div style="font-size:12px;color:${S.text};">${zh(rec.reason)}</div>
     ${buildProvidersBreakdown(rec, zh)}
     ${buildTechnicalInsight(rec, technicals[rec.ticker])}
     ${
