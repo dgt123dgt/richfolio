@@ -19,6 +19,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runtimeTickerNames } from "./config.js";
 
 const EX_UT = "7eea3edcaed734bea9cbfc24409ed989";
 const POOL_URL = (ep: string, date: string) =>
@@ -678,6 +679,12 @@ function matchConceptFlow(
 export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
   const today = await fetchLatestPool("getTopicZTPool");
   if (!today || today.pool.length === 0) return null;
+  // Register pool names into the runtime display-name registry — hot stocks and
+  // ladder/space leaders otherwise render as bare ticker codes in the email.
+  for (const s of today.pool) {
+    const ticker = `${s.c}.${s.m === 1 ? "SS" : "SZ"}`;
+    if (!runtimeTickerNames[ticker]) runtimeTickerNames[ticker] = s.n;
+  }
   const zb = await fetchPool("getTopicZBPool", today.date);
   const dt = await fetchPool("getTopicDTPool", today.date);
 

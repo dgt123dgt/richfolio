@@ -293,7 +293,7 @@ describe("hot-stock technical screen", () => {
     assert.ok(html.includes(">价值<"), "价值 chip rendered");
   });
 
-  it("downgrades to 无需关注 when bearish signals stack up", () => {
+  it("hides 无需关注 rows entirely from the table", () => {
     const html = render(
       {
         "600519.SS": tech({
@@ -305,8 +305,8 @@ describe("hot-stock technical screen", () => {
       },
       { "600519.SS": quote({ ticker: "600519.SS" }) },
     );
-    assert.ok(html.includes("无需关注"), "neutral verdict present");
-    assert.ok(html.includes("#f1f5f9"), "grey pill applied");
+    assert.ok(!html.includes("600519"), "row suppressed, not rendered with a grey pill");
+    assert.ok(html.includes("无需关注"), "legend still explains the hidden tier");
   });
 
   it("renders an industry / region / concept board column", () => {

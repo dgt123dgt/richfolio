@@ -52,9 +52,10 @@ describe("buildEmailHtml news sections", () => {
     },
   ];
 
-  it("shows per-ticker news only for AI BUY calls", () => {
+  it("shows per-ticker news for AI BUY calls inside the merged news block", () => {
     const html = buildEmailHtml(report, news, aiRecs, {}, priceData, [], hotNews);
-    assert.ok(html.includes("推荐买入标的的相关新闻"));
+    assert.ok(html.includes("市场新闻与热点"), "merged news block");
+    assert.ok(html.includes("AI 买入标的动态"));
     assert.ok(html.includes("贵州茅台三季报超预期"), "buy ticker news should render");
     assert.ok(!html.includes("平安银行再融资获批"), "non-buy ticker news must be filtered out");
   });
@@ -72,6 +73,12 @@ describe("buildEmailHtml news sections", () => {
     assert.ok(!html.includes("影响："), "no wrapper label");
   });
 
+  it("falls back to the first recs when no BUY calls exist, so evidence is never missing", () => {
+    const html = buildEmailHtml(report, news, [rec("000001.SZ", "WAIT")], {}, priceData, [], hotNews);
+    assert.ok(html.includes("AI 买入标的动态"));
+    assert.ok(html.includes("平安银行再融资获批"), "fallback rec news still renders");
+  });
+
   it("shows current price on AI cards", () => {
     const html = buildEmailHtml(report, news, aiRecs, {}, priceData, [], hotNews);
     assert.ok(html.includes("现价"));
@@ -80,7 +87,7 @@ describe("buildEmailHtml news sections", () => {
 
   it("omits both news blocks when there is nothing to show", () => {
     const html = buildEmailHtml(report, {}, [rec("600519.SS", "HOLD")], {}, priceData, [], []);
-    assert.ok(!html.includes("推荐买入标的的相关新闻"));
+    assert.ok(!html.includes("市场新闻与热点"));
     assert.ok(!html.includes("近 6 小时市场热点"));
   });
 });

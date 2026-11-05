@@ -287,7 +287,6 @@ function buildAISection(
   // Portfolio tickers (excludes watch list)
   const portfolioRecs = aiRecs.filter((r) => !r.isWatching);
   const actionable = portfolioRecs.filter((r) => r.action === "STRONG BUY" || r.action === "BUY");
-  const others = portfolioRecs.filter((r) => r.action !== "STRONG BUY" && r.action !== "BUY");
   // Watch list tickers — rendered as a separate sub-section below the portfolio
   // recommendations. Allocation rules don't apply; suggestedBuyValue is always 0.
   const watching = aiRecs.filter((r) => r.isWatching);
@@ -339,7 +338,7 @@ function buildAISection(
     return text;
   };
   const topActionable = hasPortfolioRecs ? actionable : watchActionable;
-  const topOthers = hasPortfolioRecs ? others : watchOthers;
+  // 「持有 / 观望」栏已按用户要求移除 — 未达买入标准的标的只在快筛表中体现。
 
   const actionableCard = (rec: AIBuyRecommendation): string => `
   <div style="padding:10px 0;border-bottom:1px solid ${S.border};">
@@ -377,7 +376,7 @@ function buildAISection(
   const emptyBox = `
   <div style="background:#f8fafc;border:1px dashed ${S.border};border-radius:8px;padding:16px 12px;text-align:center;">
     <div style="font-size:13px;font-weight:bold;color:${S.muted};">今日暂无符合买入条件的标的</div>
-    <div style="font-size:11px;color:${S.muted};margin-top:4px;">全部标的均未达到「买入 / 强烈买入」标准 — 详见下方持有/观望与快筛表。</div>
+    <div style="font-size:11px;color:${S.muted};margin-top:4px;">全部标的均未达到「买入 / 强烈买入」标准 — 详见下方快筛表。</div>
   </div>`;
 
   return `
@@ -387,7 +386,7 @@ function buildAISection(
   <div style="margin-top:8px;background:#f8fafc;border-left:3px solid ${S.blue};border-radius:0 6px 6px 0;padding:8px 12px;font-size:11px;color:${S.muted};line-height:1.6;">
     <b style="color:${S.blue};">入选逻辑：</b>AI 综合估值（市盈率、52 周位置、分析师目标价）、技术面（RSI、MACD、50/200 日均线）、消息面（近 24 小时新闻情绪）${
       hasPortfolioRecs ? "与配置缺口" : ""
-    }打分，结论为「买入 / 强烈买入」的标的才进入本栏；未达标的显示在「持有 / 观望」中。
+    }打分，结论为「买入 / 强烈买入」的标的才进入本栏；未达买入标准的标的见下方快筛表。
   </div>
   ${
     !hasPortfolioRecs && watching.length > 0
@@ -400,15 +399,6 @@ function buildAISection(
     topActionable.length > 0
       ? topActionable.map(actionableCard).join("")
       : emptyBox
-  }
-  ${
-    topOthers.length > 0
-      ? `
-  <div style="margin-top:14px;">
-    <div style="font-size:11px;color:${S.muted};text-transform:uppercase;margin-bottom:6px;">持有 / 观望</div>
-    ${topOthers.map(otherRow).join("")}
-  </div>`
-      : ""
   }
   ${
     hasPortfolioRecs && watching.length > 0
@@ -492,16 +482,36 @@ export function buildEmailHtml(
     day: "numeric",
   });
 
-  // News is shown in two blocks, in this order:
-  //   A. per-ticker news for names the AI recommended buying (the reader only
-  //      needs evidence for actionable calls);
-  //   B. market-wide hot flashes from the last few hours.
+  // News is shown in one merged block: market-wide hot flashes + the AI buy
+  // candidates' own news, each item tagged 利好/利空/中性 so the reader sees
+  // the direction analysis next to every headline.
   const buyTickers = new Set(
     aiRecs.filter((r) => r.action === "STRONG BUY" || r.action === "BUY").map((r) => r.ticker),
   );
-  const recommendedNews = aiRecs
-    .filter((r) => buyTickers.has(r.ticker) && (news[r.ticker]?.length ?? 0) > 0)
-    .map((r) => [r.ticker, news[r.ticker]] as const);
+  // No actionable calls today → fall back to the first few recs that were still
+  // shown in the AI section, so evidence is never missing for what IS shown.
+  const newsTickers =
+    buyTickers.size > 0
+      ? [...buyTickers]
+      : aiRecs
+          .filter((r) => r.action !== "TRIM")
+          .slice(0, 4)
+          .map((r) => r.ticker);
+  const buyStockNews = newsTickers
+    .filter((t) => (news[t]?.length ?? 0) > 0)
+    .map((t) => [t, news[t]] as const);
+
+  // "板块 银行" → "银行板块" etc. — shared by flashes and buy-target news.
+  const scopeText = (s: string): string =>
+    s === "大盘"
+      ? "大盘"
+      : s.startsWith("板块 ")
+        ? `${s.slice(3)}板块`
+        : s.startsWith("概念 ")
+          ? `${s.slice(3)}概念`
+          : s.startsWith("个股 ")
+            ? s.slice(3)
+            : s;
 
   // Chinese names of every stock in the report — the hot-flash classifier uses
   // them to tag 个股 scope when a flash mentions one of our names.
@@ -624,73 +634,77 @@ ${
     : ""
 }
 
-<!-- News A: per-ticker news for AI BUY calls only -->
-${
-  recommendedNews.length > 0
-    ? `
-<tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">推荐买入标的的相关新闻</h2>
-  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">仅展示上方面向「买入」的标的，便于核对模型判断依据。</p>
-</td></tr>
-<tr><td style="padding:0 24px 16px;background:${S.cardBg};">
-  ${recommendedNews
-    .map(
-      ([ticker, articles]) => `
-  <div style="margin-bottom:12px;">
-    <div style="font-weight:bold;font-size:13px;color:#1a202c;margin-bottom:4px;">${displayName(ticker)} <span style="font-size:10px;color:${S.muted};font-weight:normal;">${ticker}</span>&nbsp;${chipsFor(ticker)}</div>
-    ${articles
-      .map(
-        (a) => `
-    <div style="margin-left:12px;margin-bottom:4px;font-size:12px;">
-      <a href="${a.url}" style="color:${S.blue};text-decoration:none;">→ ${a.title}</a>
-      <span style="color:${S.muted};font-size:11px;"> — ${a.source}</span>
-    </div>`,
-      )
-      .join("")}
-  </div>`,
-    )
-    .join("")}
-</td></tr>
-`
-    : ""
-}
+<!-- News A merged into the hot-flashes block below -->
 
-<!-- News B: market-wide hot flashes (last ~6h) -->
+<!-- News: market-wide hot flashes (last ~6h) + AI buy-target news, impact-tagged -->
 ${
-  hotNews.length > 0
+  hotNews.length > 0 || buyStockNews.length > 0
     ? `
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">近 6 小时市场热点</h2>
-  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">东方财富 7×24 快讯，已剔除涨跌停/连板等无信息量的标题。</p>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">市场新闻与热点</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">东方财富 7×24 快讯 + AI 买入标的的相关新闻，每条附利好/利空方向分析。</p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
+  ${
+    hotNews.length > 0
+      ? `<div style="font-size:11px;color:${S.blue};font-weight:bold;margin:6px 0;">近 6 小时市场热点</div>
   ${hotNews
     .map((a) => {
       const im = classifyHotNewsImpact(a.title, "", knownNames);
-      // Plain prose, one phrase per scope joined by ；: 利好大盘；利好银行板块.
-      const scopeText = (s: string): string =>
-        s === "大盘"
-          ? "大盘"
-          : s.startsWith("板块 ")
-            ? `${s.slice(3)}板块`
-            : s.startsWith("概念 ")
-              ? `${s.slice(3)}概念`
-              : s.startsWith("个股 ")
-                ? s.slice(3)
-                : s;
-      const impactLine =
+      // Every flash gets a direction line: 利好 (red) / 利空 (green) with its
+      // scopes, or an explicit 中性 when no directional keyword appears.
+      const impactColor =
+        im.impact === "利好" ? "#b91c1c" : im.impact === "利空" ? "#15803d" : S.muted;
+      const impactBody =
         im.impact && im.scopes.length > 0
-          ? `<div style="margin-left:12px;margin-top:2px;font-size:10px;color:${S.muted};">${im.scopes.map((s) => `${im.impact}${scopeText(s)}`).join("；")}</div>`
-          : "";
+          ? im.scopes.map((s) => `${im.impact}${scopeText(s)}`).join("；")
+          : im.impact
+            ? `${im.impact}（范围未定位）`
+            : "中性：标题未含方向性关键词";
       return `
   <div style="margin-bottom:8px;font-size:12px;">
     <span style="color:${S.muted};font-size:11px;">${a.publishedAt.slice(11, 16)}</span>
     ${a.url ? `<a href="${a.url}" style="color:${S.blue};text-decoration:none;">${a.title}</a>` : `<span>${a.title}</span>`}
     <span style="color:${S.muted};font-size:11px;"> — ${a.source}</span>
-    ${impactLine}
+    <div style="margin-left:12px;margin-top:2px;font-size:10px;color:${impactColor};">${impactBody}</div>
   </div>`;
     })
-    .join("")}
+    .join("")}`
+      : ""
+  }
+  ${
+    buyStockNews.length > 0
+      ? `<div style="font-size:11px;color:${S.blue};font-weight:bold;margin:14px 0 6px;">AI 买入标的动态</div>
+  ${buyStockNews
+    .map(
+      ([ticker, articles]) => `
+  <div style="margin-bottom:12px;">
+    <div style="font-weight:bold;font-size:13px;color:#1a202c;margin-bottom:4px;">${displayName(ticker)} <span style="font-size:10px;color:${S.muted};font-weight:normal;">${ticker}</span>&nbsp;${chipsFor(ticker)}</div>
+    ${articles
+      .map((a) => {
+        const im = classifyHotNewsImpact(a.title, "", knownNames);
+        const impactColor =
+          im.impact === "利好" ? "#b91c1c" : im.impact === "利空" ? "#15803d" : S.muted;
+        const impactLabel = im.impact ?? "中性";
+        const scopes = im.scopes.filter((s) => s.startsWith("个股 ") && s.slice(3) !== displayName(ticker));
+        const impactTxt =
+          scopes.length > 0
+            ? scopes.map((s) => `${im.impact ?? ""}${scopeText(s)}`).join("；")
+            : impactLabel;
+        return `
+    <div style="margin-left:12px;margin-bottom:4px;font-size:12px;">
+      <span style="display:inline-block;background:${im.impact === "利好" ? "#fee2e2" : im.impact === "利空" ? "#dcfce7" : "#f1f5f9"};color:${impactColor};font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;margin-right:6px;">${impactLabel}</span>
+      <a href="${a.url}" style="color:${S.blue};text-decoration:none;">${a.title}</a>
+      <span style="color:${S.muted};font-size:11px;"> — ${a.source}</span>
+      ${scopes.length > 0 ? `<div style="margin-left:12px;margin-top:2px;font-size:10px;color:${impactColor};">${impactTxt}</div>` : ""}
+    </div>`;
+      })
+      .join("")}
+  </div>`,
+    )
+    .join("")}`
+      : ""
+  }
 </td></tr>
 `
     : ""
@@ -1118,6 +1132,9 @@ function techScreenSection(
         if (bullish >= 2) return { text: "密切关注", bg: "#dcfce7", fg: "#15803d" };
         return { text: "可关注", bg: "#fef9c3", fg: "#a16207" };
       })();
+      // 无需关注 rows are hidden entirely — the user wants only actionable /
+      // warning rows in the table. 反抽 rows keep their own 回避 verdict.
+      if (tier.text === "无需关注" && shortType !== "反抽") return "";
       // 反抽 overrides the tier — by definition it is a trap to avoid.
       const verdict: { text: string; bg: string; fg: string } =
         shortType === "反抽"
@@ -1166,8 +1183,8 @@ function techScreenSection(
   </p>
   <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">
     结论分级：<span style="display:inline-block;background:#dcfce7;color:#15803d;font-weight:bold;padding:1px 6px;border-radius:10px;">密切关注</span> 两项以上利好共振（金叉/MACD多头/深度超卖/放量上涨） ·
-    <span style="display:inline-block;background:#fef9c3;color:#a16207;font-weight:bold;padding:1px 6px;border-radius:10px;">可关注</span> 单项利好 ·
-    <span style="display:inline-block;background:#f1f5f9;color:#64748b;font-weight:bold;padding:1px 6px;border-radius:10px;">无需关注</span> 无信号或多项利空叠加
+    <span style="display:inline-block;background:#fef9c3;color:#a16207;font-weight:bold;padding:1px 6px;border-radius:10px;">可关注</span> 单项利好；
+    「无需关注」（无信号或多项利空叠加）的标的默认不显示。
   </p>
   <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">
     形态前缀（短期盘面状态，随行情切换）：妖股 / 连板龙头 · 涨停 · 跌停 · 超跌反弹（放量修复） · 反抽（缩量自救，回避） · 题材脉冲 · 趋势中军 · 箱体波段；前缀后接分级，如「趋势中军·可关注」。
