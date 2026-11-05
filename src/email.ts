@@ -876,13 +876,9 @@ function techScreenSection(
 
       return `
     <tr style="${rowBg}">
-      <td style="padding:4px 3px;      ${
-        chips.length > 0
-          ? `<div style="margin-top:2px;">${renderChips(chips)}</div>`
-          : ""
-      }</td>
-      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;${accent ? `color:${accent.fg};font-weight:bold;` : ""}">${price != null ? fmt$(price) : "—"}</td>
-      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${chg == null ? S.muted : chg >= 0 ? S.red : S.green};font-weight:${chg == null ? "normal" : "bold"};">${chg == null ? "—" : fmtPct(chg)}</td>
+      <td style="padding:4px 3px;${rowBorder}border-bottom:1px solid ${S.border};font-weight:bold;color:#1a202c;">${displayName(ticker)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${ticker}</div>${chips.length > 0 ? `<div style="margin-top:2px;">${renderChips(chips)}</div>` : ""}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${price != null ? fmt$(price) : "—"}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${chg == null ? "—" : fmtPct(chg)}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">RSI ${t.rsi14 ?? "—"}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">${tags.map((x) => `<span style="color:${x.color};font-size:10px;">${x.text}</span>`).join(" ")}</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;"><span style="color:${verdict.color};font-size:11px;font-weight:bold;">${verdict.text}</span></td>
@@ -901,7 +897,7 @@ function techScreenSection(
     <span style="display:inline-block;background:${CHIP_OLD_LEADER.bg};color:${CHIP_OLD_LEADER.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">老龙头</span>
     <span style="display:inline-block;background:${CHIP_NATIONAL_TEAM.bg};color:${CHIP_NATIONAL_TEAM.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">国家队</span>
     <span style="display:inline-block;background:${CHIP_WHITE_HORSE.bg};color:${CHIP_WHITE_HORSE.fg};font-weight:bold;padding:1px 5px;border-radius:3px;">白马</span>
-    　涨跌为正红色、为负绿色（A 股习惯）。
+    　标签标注股票类型，文字保持黑色。
   </p>
   <p style="margin:4px 0 0;font-size:10px;color:${S.muted};">
     老龙头：近一年涨幅&gt;100% 且两年涨停&gt;15 次 · 国家队：汇金/证金/社保/养老/国新现身前十大股东 · 白马：市值≥500亿、ROE≥10%、PE≤60
