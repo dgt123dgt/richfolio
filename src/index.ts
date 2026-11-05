@@ -7,6 +7,7 @@ import {
   hotStockConfig,
   watchingSet,
   runtimeTickerNames,
+  displayName,
 } from "./config.js";
 import { fetchHotAshareStocks } from "./fetchHotStocks.js";
 import { fetchCryptoPairs } from "./fetchCrypto.js";
@@ -15,7 +16,7 @@ import type { TimedCandle } from "./fetchCrypto.js";
 import { buildAllocationReport } from "./allocation.js";
 import { fetchPrices, fetchMacroIndicators, formatMacroContext } from "./fetchPrices.js";
 import { fetchTechnicals } from "./fetchTechnicals.js";
-import { fetchNews } from "./fetchNews.js";
+import { fetchNews, fetchMarketHotNews } from "./fetchNews.js";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -79,6 +80,7 @@ async function enrichStrongBuysWithAnalysis(
 
     rec.analysisUrl = buildAnalysisUrl({
       ticker: rec.ticker,
+      name: displayName(rec.ticker, quote.name ?? rec.tickerFullName ?? null) || rec.ticker,
       date: new Date().toISOString().slice(0, 10),
       action: view.action,
       confidence: view.confidence,
@@ -514,9 +516,14 @@ try {
     }
   } else {
     // Daily mode: full brief with news + AI + technicals
-    const [news, technicals] = await Promise.all([
+    const [news, technicals, hotNews] = await Promise.all([
       fetchNews(tickers, prices),
       fetchTechnicals(tickers, prices, fxRates),
+      // Market-wide flashes for the "近 6 小时市场热点" block; failure is benign.
+      fetchMarketHotNews().catch((err) => {
+        console.warn(`⚠ Hot news fetch failed: ${(err as Error).message}`);
+        return [];
+      }),
     ]);
     // Cross-pair indicators come from the crypto.com candles, not Yahoo. Required,
     // not optional: without them the watch block shows no indicators at all and
@@ -550,7 +557,7 @@ try {
       });
     }
 
-    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped);
+    await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews);
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);
     } catch (err) {

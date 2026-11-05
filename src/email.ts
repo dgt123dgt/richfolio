@@ -266,6 +266,13 @@ function buildAISection(
   const watchActionable = watching.filter((r) => r.action === "STRONG BUY" || r.action === "BUY");
   const watchOthers = watching.filter((r) => r.action !== "STRONG BUY" && r.action !== "BUY");
 
+  // Current price next to each call — the reader judges "能不能买" against it.
+  const priceTag = (ticker: string): string => {
+    const q = priceData[ticker];
+    if (!q) return "";
+    return `<span style="font-size:11px;color:${S.muted};margin-left:8px;">现价 <b style="font-size:12px;color:#1a202c;">${fmt$(q.price)}</b></span>`;
+  };
+
   // Detect provider mode from the first rec's providers[] (uniformly populated
   // by the orchestrator). When ≥2 active, surface that in the subtitle.
   const firstWithProviders = aiRecs.find((r) => r.providers && r.providers.length > 0);
@@ -291,7 +298,7 @@ function buildAISection(
       <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
       <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
       &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
-      &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}
+      &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}${priceTag(rec.ticker)}
       ${rec.suggestedBuyValue > 0 ? `<span style="float:right;font-weight:bold;color:#1a202c;">${fmt$(rec.suggestedBuyValue)}</span>` : ""}
     </div>
     <div style="font-size:12px;color:${S.text};margin-top:4px;">${rec.reason}</div>
@@ -320,7 +327,7 @@ function buildAISection(
         (rec) => `
     <div style="padding:4px 0;font-size:12px;">
       <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-      &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}
+      &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
       <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
     </div>`,
       )
@@ -342,7 +349,7 @@ function buildAISection(
         <span style="font-weight:bold;font-size:14px;color:#1a202c;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span>
       <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
         &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${earningsBadge(priceData[rec.ticker]?.daysToEarnings ?? null)}${isMultiAI(rec) ? agreementBadge(rec.agreement) : ""}${degradedBadge(rec.degradation)}
-        &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}
+        &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}${priceTag(rec.ticker)}
       </div>
       <div style="font-size:12px;color:${S.text};margin-top:4px;">${rec.reason}</div>
       ${buildProvidersBreakdown(rec)}
@@ -367,7 +374,7 @@ function buildAISection(
           (rec) => `
       <div style="padding:4px 0;font-size:12px;">
         <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
-        &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}
+        &nbsp;${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
         <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
       </div>`,
         )
@@ -426,6 +433,7 @@ export function buildEmailHtml(
   technicals: Record<string, TechnicalData> = {},
   priceData: Record<string, QuoteData> = {},
   fxSkipped: Array<{ ticker: string; reason: string }> = [],
+  hotNews: NewsItem[] = [],
 ): string {
   const date = new Date().toLocaleDateString("zh-CN", {
     weekday: "long",
@@ -434,7 +442,16 @@ export function buildEmailHtml(
     day: "numeric",
   });
 
-  const tickersWithNews = Object.entries(news).filter(([, items]) => items.length > 0);
+  // News is shown in two blocks, in this order:
+  //   A. per-ticker news for names the AI recommended buying (the reader only
+  //      needs evidence for actionable calls);
+  //   B. market-wide hot flashes from the last few hours.
+  const buyTickers = new Set(
+    aiRecs.filter((r) => r.action === "STRONG BUY" || r.action === "BUY").map((r) => r.ticker),
+  );
+  const recommendedNews = aiRecs
+    .filter((r) => buyTickers.has(r.ticker) && (news[r.ticker]?.length ?? 0) > 0)
+    .map((r) => [r.ticker, news[r.ticker]] as const);
 
   // The caveat below warns that limit prices are stated in the report currency
   // even though the instrument trades in another one — an FX-conversion artefact.
@@ -533,15 +550,16 @@ ${
     : ""
 }
 
-<!-- News Digest -->
+<!-- News A: per-ticker news for AI BUY calls only -->
 ${
-  tickersWithNews.length > 0
+  recommendedNews.length > 0
     ? `
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">新闻摘要</h2>
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">推荐买入标的的相关新闻</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">仅展示上方面向「买入」的标的，便于核对模型判断依据。</p>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
-  ${tickersWithNews
+  ${recommendedNews
     .map(
       ([ticker, articles]) => `
   <div style="margin-bottom:12px;">
@@ -555,6 +573,30 @@ ${
     </div>`,
       )
       .join("")}
+  </div>`,
+    )
+    .join("")}
+</td></tr>
+`
+    : ""
+}
+
+<!-- News B: market-wide hot flashes (last ~6h) -->
+${
+  hotNews.length > 0
+    ? `
+<tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">近 6 小时市场热点</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">东方财富 7×24 快讯，已剔除涨跌停/连板等无信息量的标题。</p>
+</td></tr>
+<tr><td style="padding:0 24px 16px;background:${S.cardBg};">
+  ${hotNews
+    .map(
+      (a) => `
+  <div style="margin-bottom:6px;font-size:12px;">
+    <span style="color:${S.muted};font-size:11px;">${a.publishedAt.slice(11, 16)}</span>
+    ${a.url ? `<a href="${a.url}" style="color:${S.blue};text-decoration:none;">${a.title}</a>` : `<span>${a.title}</span>`}
+    <span style="color:${S.muted};font-size:11px;"> — ${a.source}</span>
   </div>`,
     )
     .join("")}
@@ -672,8 +714,9 @@ export async function sendBrief(
   technicals: Record<string, TechnicalData> = {},
   priceData: Record<string, QuoteData> = {},
   fxSkipped: Array<{ ticker: string; reason: string }> = [],
+  hotNews: NewsItem[] = [],
 ): Promise<void> {
-  const html = buildEmailHtml(report, news, aiRecs, technicals, priceData, fxSkipped);
+  const html = buildEmailHtml(report, news, aiRecs, technicals, priceData, fxSkipped, hotNews);
 
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",

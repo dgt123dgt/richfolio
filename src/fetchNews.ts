@@ -52,6 +52,10 @@ function getSearchNames(ticker: string, priceData: Record<string, QuoteData>): s
 // mirrors the so.eastmoney.com web search.
 const EASTMONEY_SEARCH_URL = "https://search-api-web.eastmoney.com/search/jsonp";
 const EASTMONEY_PAGE_SIZE = 10;
+// Low-value headline patterns: limit-up/down tally pieces ("XX涨停", "XX两连板")
+// restate price action the report already shows, so they are dropped before
+// they ever reach the reader.
+const JUNK_HEADLINE_RE = /(涨停|跌停|连板|一字板|天地板|封板|炸板|打板|触板|开板)/;
 
 function isAshareTicker(ticker: string): boolean {
   return /\.(SS|SZ)$/i.test(ticker);
@@ -116,12 +120,72 @@ async function fetchEastMoneyNews(ticker: string): Promise<NewsItem[]> {
   };
   const articles = json.result?.cmsArticleWebOld ?? [];
 
-  return articles.slice(0, MAX_ARTICLES_PER_TICKER).map((a) => ({
-    title: a.title,
-    url: a.url ?? "",
-    source: a.mediaName ?? "东方财富",
-    publishedAt: a.date,
-  }));
+  return articles
+    .filter((a) => !JUNK_HEADLINE_RE.test(a.title))
+    .slice(0, MAX_ARTICLES_PER_TICKER)
+    .map((a) => ({
+      title: a.title,
+      url: a.url ?? "",
+      source: a.mediaName ?? "东方财富",
+      publishedAt: a.date,
+    }));
+}
+
+// ── Market-wide hot news (Eastmoney 7×24 flash feed) ────────────────
+// Second half of the email's news section: what the market is talking about
+// in the last few hours, independent of any single ticker. Keyless feed that
+// backs kuaixun.eastmoney.com; filtered down to stock-relevant items.
+const EASTMONEY_FLASH_URL = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns";
+const HOT_NEWS_MAX = 8;
+const HOT_NEWS_WINDOW_HOURS = 6;
+
+/** Stock-market relevance (not every flash item is about equities). */
+const STOCK_RELEVANT_RE =
+  /(A股|沪深|上证|深证|创业板|科创板|北交所|两市|大盘|板块|个股|券商|基金|IPO|上市|退市|回购|减持|增持|央行|证监会|交易所|北向|融资|沪指|深成指|恒生|港股|美股|纳指|标普|道指|收盘|开盘|锂|芯片|半导体|新能源|地产|银行|医药|消费|军工)/;
+
+interface EastmoneyFlashItem {
+  title?: string;
+  summary?: string;
+  showTime?: string;
+  mediaName?: string;
+  url?: string;
+}
+
+export async function fetchMarketHotNews(): Promise<NewsItem[]> {
+  const url =
+    `${EASTMONEY_FLASH_URL}?client=web&biz=web_724&column=350&order=1` +
+    `&needInteractData=0&page_index=1&page_size=50&req_trace=${Date.now()}` +
+    `&fields=code,showTime,title,summary,mediaName,url&types=1,20`;
+
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      Referer: "https://kuaixun.eastmoney.com/",
+    },
+  });
+  if (!res.ok) throw new Error(`Eastmoney flash ${res.status}`);
+
+  const json = (await res.json()) as { data?: { list?: EastmoneyFlashItem[] } };
+  const items = json.data?.list ?? [];
+  const cutoff = Date.now() - HOT_NEWS_WINDOW_HOURS * 60 * 60 * 1000;
+
+  const out: NewsItem[] = [];
+  for (const item of items) {
+    const title = (item.title ?? "").trim();
+    if (!title || JUNK_HEADLINE_RE.test(title)) continue;
+    // showTime is Beijing time ("2026-11-05 19:53:08") — parse with +08:00.
+    const ts = item.showTime ? Date.parse(item.showTime.replace(" ", "T") + "+08:00") : NaN;
+    if (!Number.isFinite(ts) || ts < cutoff) continue;
+    if (!STOCK_RELEVANT_RE.test(`${title} ${item.summary ?? ""}`)) continue;
+    out.push({
+      title,
+      url: item.url ?? "",
+      source: item.mediaName ?? "东方财富",
+      publishedAt: item.showTime ?? "",
+    });
+    if (out.length >= HOT_NEWS_MAX) break;
+  }
+  return out;
 }
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -273,6 +337,7 @@ REMOVE headlines that are:
 - Animal, science, sports, or entertainment articles where the keyword match is coincidental (e.g. "bond" matching animal bonding, not bond markets)
 - Ads, sponsored content, or affiliate/deal roundups
 - ETF price-announcement roundups for a DIFFERENT ETF that merely appeared in the same market-wrap article
+- Limit-up/limit-down tally pieces ("XX涨停", "XX跌停", "XX两连板", "XX封板", "XX炸板") — pure price-action restatements with no information value
 
 KEEP only headlines about: stock price, earnings, revenue, analyst ratings, market trends, company leadership, regulatory news, sector performance, fund flows, or economic indicators relevant to the ticker.
 

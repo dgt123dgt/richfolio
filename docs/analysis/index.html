@@ -1,28 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Richfolio Analysis</title>
+<title>Richfolio 个股分析</title>
 <script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
 <style>
   :root {
-    --bg: #1a1a2e;
-    --card: #16213e;
-    --text: #e0e0e0;
-    --muted: #8a8a9a;
-    --accent: #0f3460;
-    --green: #2ecc71;
-    --red: #e74c3c;
-    --yellow: #f39c12;
-    --blue: #3498db;
-    --border: #2a2a4a;
+    --bg: #eff6ff;
+    --card: #ffffff;
+    --text: #334155;
+    --muted: #64748b;
+    --accent: #0ea5e9;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #f59e0b;
+    --blue: #3b82f6;
+    --border: #e2e8f0;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto, sans-serif;
     font-size: 15px;
     line-height: 1.6;
   }
@@ -44,42 +44,49 @@
     color: #fff;
     letter-spacing: -0.5px;
   }
+  .ticker-symbol {
+    font-size: 13px;
+    color: #e0f2fe;
+    align-self: flex-end;
+    padding-bottom: 4px;
+  }
   .badge {
     display: inline-block;
     padding: 4px 12px;
     border-radius: 6px;
     font-size: 12px;
     font-weight: 700;
-    text-transform: uppercase;
   }
-  .badge-strong-buy { background: var(--green); color: #000; }
+  .badge-strong-buy { background: var(--green); color: #fff; }
   .badge-value {
     font-size: 11px;
     padding: 3px 8px;
   }
-  .badge-value-A { background: rgba(46,204,113,0.15); color: var(--green); }
-  .badge-value-B { background: rgba(52,152,219,0.15); color: var(--blue); }
-  .badge-value-C { background: rgba(243,156,18,0.15); color: var(--yellow); }
-  .badge-value-D { background: rgba(231,76,60,0.15); color: var(--red); }
+  .badge-value-A { background: rgba(34,197,94,0.15); color: #15803d; }
+  .badge-value-B { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .badge-value-C { background: rgba(245,158,11,0.15); color: #b45309; }
+  .badge-value-D { background: rgba(239,68,68,0.15); color: var(--red); }
   .header-meta {
     width: 100%;
     display: flex;
     gap: 16px;
+    flex-wrap: wrap;
     font-size: 13px;
-    color: var(--muted);
+    color: #e0f2fe;
     margin-top: 4px;
   }
   .confidence-bar {
     display: inline-block;
     width: 80px;
     height: 8px;
-    background: var(--border);
+    background: rgba(255,255,255,0.35);
     border-radius: 4px;
     vertical-align: middle;
   }
   .confidence-fill {
     height: 100%;
     border-radius: 4px;
+    background: #fff;
   }
 
   /* Card */
@@ -90,11 +97,9 @@
   }
   .card:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
   .card-title {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     color: var(--blue);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
     margin-bottom: 12px;
   }
 
@@ -114,14 +119,14 @@
     gap: 12px;
   }
   .metric {
-    background: rgba(255,255,255,0.03);
+    background: #f8fafc;
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
     text-align: center;
   }
-  .metric-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
-  .metric-value { font-size: 18px; font-weight: 700; color: #fff; margin-top: 4px; }
+  .metric-label { font-size: 11px; color: var(--muted); }
+  .metric-value { font-size: 18px; font-weight: 700; color: #1a202c; margin-top: 4px; }
   .metric-value.green { color: var(--green); }
   .metric-value.red { color: var(--red); }
   .metric-value.yellow { color: var(--yellow); }
@@ -134,7 +139,7 @@
   .risk-list li {
     padding: 8px 0 8px 20px;
     position: relative;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid var(--border);
     font-size: 14px;
   }
   .risk-list li::before {
@@ -153,14 +158,14 @@
 
   /* Action summary */
   .action-box {
-    background: rgba(46,204,113,0.08);
-    border: 1px solid rgba(46,204,113,0.25);
+    background: rgba(34,197,94,0.07);
+    border: 1px solid rgba(34,197,94,0.3);
     border-radius: 8px;
     padding: 16px;
   }
-  .action-amount { font-size: 24px; font-weight: 800; color: #fff; }
-  .action-limit { font-size: 13px; color: var(--green); margin-top: 6px; }
-  .action-bottom { font-size: 13px; color: var(--yellow); margin-top: 4px; }
+  .action-amount { font-size: 24px; font-weight: 800; color: #1a202c; }
+  .action-limit { font-size: 13px; color: #15803d; margin-top: 6px; }
+  .action-bottom { font-size: 13px; color: #b45309; margin-top: 4px; }
 
   /* Footer */
   .footer {
@@ -169,8 +174,9 @@
     padding: 16px 24px;
     text-align: center;
     font-size: 11px;
-    color: var(--muted);
+    color: #e0f2fe;
   }
+  .footer a { color: #fff; text-decoration: none; }
 
   /* Error state */
   .error {
@@ -194,15 +200,15 @@
 <body>
 <div class="container" id="app">
   <div class="error" id="error" style="display:none;">
-    <h2>No Analysis Data</h2>
-    <p>This link may have expired or been corrupted.<br>Analysis data is embedded in the URL — try opening the original link from your email.</p>
+    <h2>无法读取分析数据</h2>
+    <p>此链接可能已失效或已损坏。<br>分析数据内嵌在 URL 中 —— 请从邮件里重新打开原始链接。</p>
   </div>
 </div>
 
 <script>
 // ── Key expansion map (compact → full) ───────────────────────────────
 const KEY_MAP = {
-  t: 'ticker', d: 'date', a: 'action', c: 'confidence',
+  t: 'ticker', n: 'name', d: 'date', a: 'action', c: 'confidence',
   r: 'reason', bt: 'buyThesis', ri: 'risks',
   bv: 'suggestedBuyValue', lp: 'suggestedLimitPrice', lr: 'limitPriceReason',
   vr: 'valueRating', bs: 'bottomSignal', cur: 'currency',
@@ -222,6 +228,19 @@ function expand(compact) {
   }
   return full;
 }
+
+// ── Chinese display labels ──────────────────────────────────────────
+const ACTION_LABELS = {
+  'STRONG BUY': '强烈买入',
+  'BUY': '买入',
+  'HOLD': '持有',
+  'WAIT': '观望',
+  'TRIM': '减持',
+};
+const MOMENTUM_LABELS = { bullish: '看多', bearish: '看空', neutral: '中性' };
+const VALUE_LABELS = {
+  A: '价值 A', B: '价值 B', C: '价值 C', D: '价值 D',
+};
 
 // ── Decode URL hash ──────────────────────────────────────────────────
 function decodeHash() {
@@ -244,22 +263,22 @@ function decodeHash() {
 }
 
 // ── Formatters ──────────────────────────────────────────────────────
-function fmt$(n) { return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 }); }
+function fmt$(n) { return '¥' + Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 0 }); }
 // Money in the instrument's own currency. `d.currency` is absent for anything in
-// the report currency (kept out of the URL to save bytes), so `$` is the default;
+// the report currency (kept out of the URL to save bytes), so ¥ is the default;
 // a crypto cross-pair sets it and renders as "1,295,840 CRO" instead.
 function money(d, n, decimals) {
   const v = Number(n);
   if (!d.currency) {
-    return '$' + v.toFixed(decimals ?? 2);
+    return '¥' + v.toFixed(decimals ?? 2);
   }
   // Large whole-unit amounts read better grouped and undecorated.
   const digits = Math.abs(v) >= 1000 ? 0 : (decimals ?? 2);
-  return v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }) +
+  return v.toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }) +
     ' ' + d.currency;
 }
 function fmtPct(n) { return (n * 100).toFixed(0) + '%'; }
-function fmtNum(n, d) { return n != null ? Number(n).toFixed(d ?? 1) : 'N/A'; }
+function fmtNum(n, d) { return n != null ? Number(n).toFixed(d ?? 1) : '暂无'; }
 
 function confidenceColor(c) {
   return c >= 70 ? 'var(--green)' : c >= 40 ? 'var(--yellow)' : 'var(--red)';
@@ -281,6 +300,9 @@ function momentumColor(m) {
 function tvSymbol(ticker) {
   if (ticker === 'BTC' || ticker === 'BTC-USD') return 'COINBASE:BTCUSD';
   if (ticker === 'ETH' || ticker === 'ETH-USD') return 'COINBASE:ETHUSD';
+  // A-share: Yahoo style 600519.SS → SSE:600519, 000001.SZ → SZSE:000001
+  const m = ticker.match(/^(\d{6})\.(SS|SZ)$/);
+  if (m) return (m[2] === 'SS' ? 'SSE:' : 'SZSE:') + m[1];
   return ticker;
 }
 
@@ -293,7 +315,9 @@ function repoUrl() {
 
 // ── Render ───────────────────────────────────────────────────────────
 function render(d) {
-  document.title = `${d.ticker} — STRONG BUY Analysis | Richfolio`;
+  const displayName = d.name || d.ticker;
+  const actionLabel = ACTION_LABELS[d.action] || d.action;
+  document.title = `${displayName} — ${actionLabel}分析 | Richfolio`;
 
   const app = document.getElementById('app');
   const confColor = confidenceColor(d.confidence);
@@ -303,15 +327,16 @@ function render(d) {
   // Header
   html += `
   <div class="header">
-    <span class="ticker-name">${d.ticker}</span>
-    <span class="badge badge-strong-buy">${d.action}</span>
-    ${d.valueRating ? `<span class="badge badge-value badge-value-${d.valueRating}">Value ${d.valueRating}</span>` : ''}
+    <span class="ticker-name">${displayName}</span>
+    <span class="ticker-symbol">${d.ticker}</span>
+    <span class="badge badge-strong-buy">${actionLabel}</span>
+    ${d.valueRating ? `<span class="badge badge-value badge-value-${d.valueRating}">${VALUE_LABELS[d.valueRating] || d.valueRating}</span>` : ''}
     <div class="header-meta">
       <span>
-        <span class="confidence-bar"><span class="confidence-fill" style="width:${d.confidence}%;background:${confColor};"></span></span>
-        &nbsp;${d.confidence}% confidence
+        <span class="confidence-bar"><span class="confidence-fill" style="width:${d.confidence}%;"></span></span>
+        &nbsp;置信度 ${d.confidence}%
       </span>
-      <span>As of ${d.date}</span>
+      <span>数据日期 ${d.date}</span>
       <span style="color:#fff;font-weight:700;">${money(d, d.price)}</span>
     </div>
   </div>`;
@@ -327,20 +352,20 @@ function render(d) {
 
   // Key Metrics
   const metrics = [
-    { label: 'Price', value: money(d, d.price) },
-    { label: 'Trailing P/E', value: d.trailingPE != null ? fmtNum(d.trailingPE) : 'N/A' },
-    { label: 'Forward P/E', value: d.forwardPE != null ? fmtNum(d.forwardPE) : 'N/A' },
-    { label: '52w Position', value: d.fiftyTwoWeekPercent != null ? fmtPct(d.fiftyTwoWeekPercent) : 'N/A',
+    { label: '现价', value: money(d, d.price) },
+    { label: '市盈率(TTM)', value: d.trailingPE != null ? fmtNum(d.trailingPE) : '暂无' },
+    { label: '预期市盈率', value: d.forwardPE != null ? fmtNum(d.forwardPE) : '暂无' },
+    { label: '52周位置', value: d.fiftyTwoWeekPercent != null ? fmtPct(d.fiftyTwoWeekPercent) : '暂无',
       cls: d.fiftyTwoWeekPercent != null ? (d.fiftyTwoWeekPercent < 0.3 ? 'green' : d.fiftyTwoWeekPercent > 0.8 ? 'red' : '') : '' },
-    { label: 'RSI (14)', value: d.rsi14 != null ? fmtNum(d.rsi14, 0) : 'N/A', cls: d.rsi14 != null ? rsiClass(d.rsi14) : '' },
-    { label: '50-Day MA', value: d.sma50 != null ? money(d, d.sma50, 0) : 'N/A' },
-    { label: '200-Day MA', value: d.sma200 != null ? '$' + fmtNum(d.sma200, 0) : 'N/A' },
-    { label: 'Momentum', value: d.momentumSignal || 'N/A', cls: momentumColor(d.momentumSignal) },
+    { label: 'RSI (14)', value: d.rsi14 != null ? fmtNum(d.rsi14, 0) : '暂无', cls: d.rsi14 != null ? rsiClass(d.rsi14) : '' },
+    { label: '50日均线', value: d.sma50 != null ? money(d, d.sma50, 0) : '暂无' },
+    { label: '200日均线', value: d.sma200 != null ? money(d, d.sma200, 0) : '暂无' },
+    { label: '动量', value: MOMENTUM_LABELS[d.momentumSignal] || d.momentumSignal || '暂无', cls: momentumColor(d.momentumSignal) },
   ];
 
   html += `
   <div class="card">
-    <div class="card-title">Key Metrics</div>
+    <div class="card-title">关键指标</div>
     <div class="metrics-grid">
       ${metrics.map(m => `
       <div class="metric">
@@ -355,7 +380,7 @@ function render(d) {
     const paragraphs = d.buyThesis.split(/\n\n+/).filter(Boolean);
     html += `
     <div class="card thesis">
-      <div class="card-title">Buy Thesis</div>
+      <div class="card-title">买入逻辑</div>
       ${paragraphs.map(p => `<p>${p}</p>`).join('')}
     </div>`;
   }
@@ -364,7 +389,7 @@ function render(d) {
   if (d.risks && d.risks.length > 0) {
     html += `
     <div class="card">
-      <div class="card-title">Risk Analysis</div>
+      <div class="card-title">风险分析</div>
       <ul class="risk-list">
         ${d.risks.map(r => `<li>${r}</li>`).join('')}
       </ul>
@@ -373,18 +398,18 @@ function render(d) {
 
   // Fundamentals (if available)
   const fundEntries = [
-    d.returnOnEquity != null ? { label: 'ROE', value: (d.returnOnEquity * 100).toFixed(1) + '%', cls: d.returnOnEquity > 0.15 ? 'green' : '' } : null,
-    d.debtToEquity != null ? { label: 'Debt/Equity', value: d.debtToEquity.toFixed(1) + '%', cls: d.debtToEquity < 50 ? 'green' : d.debtToEquity > 100 ? 'red' : '' } : null,
-    d.profitMargins != null ? { label: 'Profit Margin', value: (d.profitMargins * 100).toFixed(1) + '%', cls: d.profitMargins > 0.2 ? 'green' : '' } : null,
-    d.revenueGrowth != null ? { label: 'Rev Growth', value: (d.revenueGrowth * 100).toFixed(1) + '%', cls: d.revenueGrowth > 0 ? 'green' : 'red' } : null,
-    d.earningsGrowth != null ? { label: 'Earnings Growth', value: (d.earningsGrowth * 100).toFixed(1) + '%', cls: d.earningsGrowth > 0 ? 'green' : 'red' } : null,
-    d.targetMeanPrice != null ? { label: 'Analyst Target', value: '$' + fmtNum(d.targetMeanPrice, 2), cls: d.targetMeanPrice > d.price ? 'green' : 'red' } : null,
+    d.returnOnEquity != null ? { label: '净资产收益率', value: (d.returnOnEquity * 100).toFixed(1) + '%', cls: d.returnOnEquity > 0.15 ? 'green' : '' } : null,
+    d.debtToEquity != null ? { label: '负债/权益', value: d.debtToEquity.toFixed(1) + '%', cls: d.debtToEquity < 50 ? 'green' : d.debtToEquity > 100 ? 'red' : '' } : null,
+    d.profitMargins != null ? { label: '净利率', value: (d.profitMargins * 100).toFixed(1) + '%', cls: d.profitMargins > 0.2 ? 'green' : '' } : null,
+    d.revenueGrowth != null ? { label: '营收增速', value: (d.revenueGrowth * 100).toFixed(1) + '%', cls: d.revenueGrowth > 0 ? 'green' : 'red' } : null,
+    d.earningsGrowth != null ? { label: '利润增速', value: (d.earningsGrowth * 100).toFixed(1) + '%', cls: d.earningsGrowth > 0 ? 'green' : 'red' } : null,
+    d.targetMeanPrice != null ? { label: '分析师目标价', value: money(d, d.targetMeanPrice), cls: d.targetMeanPrice > d.price ? 'green' : 'red' } : null,
   ].filter(Boolean);
 
   if (fundEntries.length > 0) {
     html += `
     <div class="card">
-      <div class="card-title">Fundamentals</div>
+      <div class="card-title">基本面</div>
       <div class="fundamentals-grid">
         ${fundEntries.map(f => `
         <div class="metric">
@@ -397,13 +422,13 @@ function render(d) {
 
   // Cross signals
   const signals = [];
-  if (d.goldenCross) signals.push('<span style="color:var(--green);">Golden Cross (50MA > 200MA)</span>');
-  if (d.deathCross) signals.push('<span style="color:var(--red);">Death Cross (50MA < 200MA)</span>');
-  if (d.bottomSignal) signals.push('<span style="color:var(--yellow);">Bottom Signal: ' + d.bottomSignal + '</span>');
+  if (d.goldenCross) signals.push('<span style="color:#15803d;">金叉（50日均线 &gt; 200日均线）</span>');
+  if (d.deathCross) signals.push('<span style="color:var(--red);">死叉（50日均线 &lt; 200日均线）</span>');
+  if (d.bottomSignal) signals.push('<span style="color:#b45309;">见底信号：' + d.bottomSignal + '</span>');
   if (signals.length > 0) {
     html += `
     <div class="card">
-      <div class="card-title">Signals</div>
+      <div class="card-title">技术信号</div>
       <div style="font-size:14px;">${signals.join('<br>')}</div>
     </div>`;
   }
@@ -411,12 +436,12 @@ function render(d) {
   // Action Summary
   html += `
   <div class="card">
-    <div class="card-title">Action Summary</div>
+    <div class="card-title">操作建议</div>
     <div class="action-box">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Suggested Investment</div>
-      <div class="action-amount">${fmt$(d.suggestedBuyValue)}</div>
-      ${d.suggestedLimitPrice ? `<div class="action-limit">Limit Order: ${money(d, d.suggestedLimitPrice)}${d.limitPriceReason ? ' — ' + d.limitPriceReason : ''}</div>` : ''}
-      ${d.bottomSignal ? `<div class="action-bottom">Bottom Signal: ${d.bottomSignal}</div>` : ''}
+      <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">建议投入</div>
+      <div class="action-amount">${money(d, d.suggestedBuyValue, 0)}</div>
+      ${d.suggestedLimitPrice ? `<div class="action-limit">限价建议：${money(d, d.suggestedLimitPrice)}${d.limitPriceReason ? ' —— ' + d.limitPriceReason : ''}</div>` : ''}
+      ${d.bottomSignal ? `<div class="action-bottom">见底信号：${d.bottomSignal}</div>` : ''}
     </div>
   </div>`;
 
@@ -424,7 +449,7 @@ function render(d) {
   if (d.fiftyTwoWeekLow != null && d.fiftyTwoWeekHigh != null && d.fiftyTwoWeekPercent != null) {
     html += `
     <div class="card">
-      <div class="card-title">52-Week Range</div>
+      <div class="card-title">52 周区间</div>
       <div style="display:flex;align-items:center;gap:12px;font-size:13px;">
         <span style="color:var(--muted);">${money(d, d.fiftyTwoWeekLow)}</span>
         <div style="flex:1;height:8px;background:var(--border);border-radius:4px;position:relative;">
@@ -432,29 +457,29 @@ function render(d) {
         </div>
         <span style="color:var(--muted);">${money(d, d.fiftyTwoWeekHigh)}</span>
       </div>
-      <div style="text-align:center;font-size:12px;color:var(--muted);margin-top:6px;">Current: ${money(d, d.price)} (${fmtPct(d.fiftyTwoWeekPercent)} from low)</div>
+      <div style="text-align:center;font-size:12px;color:var(--muted);margin-top:6px;">当前价 ${money(d, d.price)}（距最低点 ${fmtPct(d.fiftyTwoWeekPercent)}）</div>
     </div>`;
   }
 
   // Refresh Analysis
   html += `
   <div class="card">
-    <div class="card-title">Refresh Analysis</div>
+    <div class="card-title">复检最新分析</div>
     <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
-      Re-run analysis with the latest price (including after-hours/pre-market). Select <strong style="color:var(--text);">refresh</strong> mode and enter <strong style="color:var(--text);">${d.ticker}</strong> as the ticker:
+      用最新价格（含盘前/盘后）重新分析：选择 <strong style="color:var(--text);">refresh</strong> 模式，标的填 <strong style="color:var(--text);">${d.ticker}</strong>：
     </p>
-    <a href="${repoUrl()}/actions/workflows/portfolio-monitor.yml" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:8px;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:6px;padding:12px 16px;font-size:14px;color:var(--blue);text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--blue)'" onmouseout="this.style.borderColor='var(--border)'">
+    <a href="${repoUrl()}/actions/workflows/portfolio-monitor.yml" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:8px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:12px 16px;font-size:14px;color:var(--blue);text-decoration:none;">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
-      Run on GitHub Actions
+      在 GitHub Actions 中运行
     </a>
   </div>`;
 
   // Footer
   html += `
   <div class="footer">
-    <p>This analysis was AI-generated by Google Gemini on ${d.date}.</p>
-    <p style="margin-top:4px;">This is not financial advice. Do your own research before making investment decisions.</p>
-    <p style="margin-top:8px;">Powered by <a href="${repoUrl()}" style="color:var(--blue);text-decoration:none;">Richfolio</a></p>
+    <p>本分析由 Google Gemini AI 于 ${d.date} 生成。</p>
+    <p style="margin-top:4px;">不构成投资建议，投资前请自行研究判断。</p>
+    <p style="margin-top:8px;">由 <a href="${repoUrl()}">Richfolio</a> 提供</p>
   </div>`;
 
   app.innerHTML = html;
@@ -470,12 +495,12 @@ function render(d) {
       autosize: true,
       symbol: symbol,
       interval: 'D',
-      timezone: 'Etc/UTC',
-      theme: 'dark',
+      timezone: 'Asia/Shanghai',
+      theme: 'light',
       style: '1',
-      locale: 'en',
-      backgroundColor: '#16213e',
-      gridColor: 'rgba(42,42,74,0.5)',
+      locale: 'zh_CN',
+      backgroundColor: '#ffffff',
+      gridColor: 'rgba(226,232,240,0.6)',
       hide_top_toolbar: false,
       hide_legend: false,
       save_image: false,

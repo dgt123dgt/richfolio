@@ -3,6 +3,8 @@ import { deflateRawSync } from "node:zlib";
 // ── Types ───────────────────────────────────────────────────────────
 export interface AnalysisPageData {
   ticker: string;
+  /** Friendly display name (e.g. "贵州茅台") rendered next to the symbol. */
+  name?: string;
   date: string;
   action: string;
   confidence: number;
@@ -51,6 +53,7 @@ const MAX_URL_LENGTH = 2000;
 function compact(d: AnalysisPageData): Record<string, unknown> {
   const o: Record<string, unknown> = {
     t: d.ticker,
+    n: d.name ?? d.ticker,
     d: d.date,
     a: d.action,
     c: d.confidence,
