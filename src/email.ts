@@ -6,6 +6,7 @@ import type { NewsItem } from "./fetchNews.js";
 import type { TechnicalData } from "./fetchTechnicals.js";
 import type { QuoteData } from "./fetchPrices.js";
 import type { BoardInfo } from "./fetchBoards.js";
+import { classifyHotNewsImpact } from "./hotNewsImpact.js";
 import { escapeHtmlAttr, formatMoney } from "./util.js";
 import { hasStrongBuyVote } from "./aiAggregation.js";
 
@@ -493,6 +494,18 @@ export function buildEmailHtml(
     .filter((r) => buyTickers.has(r.ticker) && (news[r.ticker]?.length ?? 0) > 0)
     .map((r) => [r.ticker, news[r.ticker]] as const);
 
+  // Chinese names of every stock in the report — the hot-flash classifier uses
+  // them to tag 个股 scope when a flash mentions one of our names.
+  const knownNames = new Set<string>();
+  for (const ticker of [
+    ...Object.keys(technicals),
+    ...Object.keys(priceData),
+    ...aiRecs.map((r) => r.ticker),
+  ]) {
+    const name = displayName(ticker);
+    if (name !== ticker) knownNames.add(name);
+  }
+
   // The caveat below warns that limit prices are stated in the report currency
   // even though the instrument trades in another one — an FX-conversion artefact.
   // Crypto cross-pairs are excluded: they are never converted, and their prices
@@ -638,14 +651,23 @@ ${
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   ${hotNews
-    .map(
-      (a) => `
-  <div style="margin-bottom:6px;font-size:12px;">
+    .map((a) => {
+      const im = classifyHotNewsImpact(a.title, "", knownNames);
+      const impactPill = im.impact
+        ? `<span style="display:inline-block;background:${im.impact === "利好" ? "#dcfce7" : "#fee2e2"};color:${im.impact === "利好" ? "#15803d" : "#b91c1c"};font-weight:bold;padding:1px 6px;border-radius:3px;">${im.impact}</span>`
+        : "";
+      const scopeLine =
+        im.scopes.length > 0
+          ? `<div style="margin-left:12px;margin-top:2px;font-size:10px;color:${S.muted};">${impactPill}${impactPill ? " " : ""}<span>影响：${im.scopes.join(" · ")}</span></div>`
+          : "";
+      return `
+  <div style="margin-bottom:8px;font-size:12px;">
     <span style="color:${S.muted};font-size:11px;">${a.publishedAt.slice(11, 16)}</span>
     ${a.url ? `<a href="${a.url}" style="color:${S.blue};text-decoration:none;">${a.title}</a>` : `<span>${a.title}</span>`}
     <span style="color:${S.muted};font-size:11px;"> — ${a.source}</span>
-  </div>`,
-    )
+    ${scopeLine}
+  </div>`;
+    })
     .join("")}
 </td></tr>
 `

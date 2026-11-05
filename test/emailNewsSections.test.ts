@@ -46,7 +46,10 @@ describe("buildEmailHtml news sections", () => {
     "000001.SZ": { ticker: "000001.SZ", price: 12, currency: "CNY" } as unknown as QuoteData,
   };
   const hotNews: NewsItem[] = [
-    { ...newsItem("央行开展5000亿元MLF操作"), publishedAt: "2026-11-05 19:30:00" },
+    {
+      ...newsItem("央行开展5000亿元MLF操作，净投放3000亿元"),
+      publishedAt: "2026-11-05 19:30:00",
+    },
   ];
 
   it("shows per-ticker news only for AI BUY calls", () => {
@@ -61,6 +64,12 @@ describe("buildEmailHtml news sections", () => {
     assert.ok(html.includes("近 6 小时市场热点"));
     assert.ok(html.includes("央行开展5000亿元MLF操作"));
     assert.ok(html.includes("19:30"), "hot news shows its time");
+  });
+
+  it("annotates each hot flash with impact and scope", () => {
+    const html = buildEmailHtml(report, news, aiRecs, {}, priceData, [], hotNews);
+    assert.ok(html.includes("利好"), "bullish pill present");
+    assert.ok(html.includes("影响：大盘"), "scope line present");
   });
 
   it("shows current price on AI cards", () => {
