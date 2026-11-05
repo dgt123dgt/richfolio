@@ -38,6 +38,21 @@ export interface MonthlyReport {
   marketBlock: string;
 }
 
+/**
+ * 该日期（北京时间 YYYY-MM-DD）是否为本自然月最后一个工作日 —— 月报的
+ * 触发判定：cron 在 28-31 日每晚都会派发 monthly，只有这天真正出报告。
+ * 注：按工作日而非真实交易日算——长假月末（如春节跨月）当天 22:00 的
+ * daily 没有新数据也无妨，月内所有交易日的快照早已在库里。
+ */
+export function isLastWeekdayOfMonth(dateStr: string): boolean {
+  const [y, m] = dateStr.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)); // 1-based m + day 0 → 本月最后一天
+  while (last.getUTCDay() === 0 || last.getUTCDay() === 6) {
+    last.setUTCDate(last.getUTCDate() - 1);
+  }
+  return dateStr === last.toISOString().slice(0, 10);
+}
+
 /** Net-value chart via QuickChart: both books on one line chart. */
 export function buildChartUrl(month: string, curves: Record<string, Array<{ date: string; total: number }>>): string {
   const dates = [...new Set(Object.values(curves).flatMap((c) => c.map((p) => p.date)))].sort();

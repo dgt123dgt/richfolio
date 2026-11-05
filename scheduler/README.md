@@ -41,10 +41,10 @@ time awaiting `fetch()` toward CPU time, and this Worker only builds a small JSO
 
 | Cron (UTC)                  | Dispatches | Local (Beijing)          |
 | --------------------------- | ---------- | ------------------------ |
-| `0 14 * * MON-FRI`          | `daily`    | 22:00 盘后简报            |
-| `30 22 * * SUN`             | `weekly`   | Monday 6:30am            |
+| `0 14 * * SUN-THU`          | `daily`    | 22:00 盘后简报（周日至周四，周五收盘撮合由周日运行补齐） |
+| `0 2 * * SAT`               | `weekly`   | Saturday 10:00 周复盘      |
 | `0 2,5 * * MON-FRI`         | `intraday` | 10:00 / 13:00 盘中快报     |
-| `0 */3 * * *`               | `crypto`   | every 3 hours            |
+| `0 15 28-31 * *`            | `monthly`  | 28–31 日 23:00，仅月末最后交易日真正出报告 |
 
 > ⚠️ **Day-of-week is spelled, never numbered.** Cloudflare follows Quartz: **`1` = Sunday**,
 > `7` = Saturday — where Unix cron has `1` = Monday. A numeric `1-5` therefore means **Sun–Thu**,

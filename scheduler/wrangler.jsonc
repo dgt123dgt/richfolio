@@ -24,9 +24,10 @@
   // docs recommend the abbreviations to avoid this.
   "triggers": {
     "crons": [
-      "0 14 * * MON-FRI", // daily brief     — 22:00 Beijing (盘后)
-      "30 22 * * SUN", // weekly report    — Monday 8:30am AEST
-      "0 2,5 * * MON-FRI" // intraday briefs — 10:00 / 13:00 Beijing
+      "0 14 * * SUN-THU", // daily brief — 22:00 Beijing, 周日至周四（周五晚不发简报）
+      "0 2 * * SAT", // weekly report — Saturday 10:00 Beijing（周六上午复盘）
+      "0 2,5 * * MON-FRI", // intraday briefs — 10:00 / 13:00 Beijing
+      "0 15 28-31 * *" // monthly report — 月末最后交易日 23:00 Beijing（其余日子 workflow 内静默退出）
     ]
   },
 

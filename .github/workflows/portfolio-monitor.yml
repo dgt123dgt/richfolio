@@ -33,7 +33,7 @@ on:
     # The event type IS the run mode — see "Determine mode" below. Anything not
     # listed here cannot trigger this workflow at all, which is what keeps
     # `github.event.action` a closed set of known-safe values.
-    types: [daily, intraday, weekly]
+    types: [daily, intraday, weekly, monthly]
   workflow_dispatch:
     inputs:
       mode:

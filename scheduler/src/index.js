@@ -53,20 +53,23 @@
  * reaches crypto-monitor.yml with no routing logic here.
  */
 export const TRIGGERS = {
-  // 22:00 Beijing = 14:00 UTC, weekdays — A-share 盘后 daily brief. Writes the
-  // baseline the intraday comparisons measure against, and fills the paper-
-  // trading book at close prices.
-  "0 14 * * MON-FRI": "daily",
+  // 22:00 Beijing = 14:00 UTC, Sunday–Thursday — A-share 盘后 daily brief
+  // (周日简报备战周一，周四简报备战周五；周五晚不发简报，周五的收盘撮合由
+  // 周日运行按 trade_days 幂等补齐). Writes the baseline the intraday
+  // comparisons measure against, and fills the paper-trading book at close.
+  "0 14 * * SUN-THU": "daily",
 
-  // Sunday 22:30 UTC. Deliberately 30min after the old daily slot rather than
-  // sharing one, so the two never run concurrently against the same state/
-  // cache.
-  "30 22 * * SUN": "weekly",
+  // Saturday 02:00 UTC = Saturday 10:00 Beijing — 周六上午做上周复盘。
+  "0 2 * * SAT": "weekly",
 
   // 10:00 / 13:00 Beijing = 02:00 / 05:00 UTC, weekdays — A-share 盘中 briefs
-  // (情绪 + AI 推荐 + 模拟盘盈亏). One expression keeps the 5-trigger
-  // free-plan budget.
+  // (情绪 + AI 推荐 + 模拟盘盈亏，盘中允许卖出至空仓). One expression keeps
+  // the 5-trigger free-plan budget.
   "0 2,5 * * MON-FRI": "intraday",
+
+  // 23:00 Beijing = 15:00 UTC, 28th–31st — 月度复盘只在月末最后一个工作日
+  // 真正出报告；workflow 入口按 isLastWeekdayOfMonth 守卫，其余日子静默退出。
+  "0 15 28-31 * *": "monthly",
 };
 
 const GITHUB_API = "https://api.github.com";

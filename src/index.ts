@@ -28,18 +28,15 @@ import {
   beijingDate,
   executeDailyTrades,
   executeIntradayFlat,
-  monthlyStats,
   snapshotAndSummarize,
   type PaperSummary,
   type ExecutedTrade,
 } from "./paperTrading.js";
 import { recsForProvider } from "./aiAggregation.js";
 import { saveBriefArchive } from "./briefArchive.js";
-import { buildMonthlyReport } from "./monthlyReport.js";
+import { buildMonthlyReport, isLastWeekdayOfMonth } from "./monthlyReport.js";
 import { sendMonthlyReport } from "./monthlyEmail.js";
 import { sendIntradayBrief } from "./email.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import type { NewsItem } from "./fetchNews.js";
 import { runAnalysis } from "./analyze.js";
 import { aiAnalyze } from "./aiAnalysis.js";
@@ -326,6 +323,34 @@ const refreshTickerRaw = isRefresh ? process.argv[process.argv.length - 1] : nul
 const refreshTicker =
   refreshTickerRaw && !refreshTickerRaw.startsWith("-") ? refreshTickerRaw.toUpperCase() : null;
 
+const isWeekendBJ = (dateStr: string): boolean => {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return wd === 0 || wd === 6;
+};
+
+/** 前一个工作日（周末日期往回退到周五）— 周日简报补撮合周五用。 */
+const lastWeekdayBefore = (dateStr: string): string => {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  do {
+    dt.setUTCDate(dt.getUTCDate() - 1);
+  } while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6);
+  return dt.toISOString().slice(0, 10);
+};
+
+// Monthly mode: cron 在 28-31 日每晚都会派发 monthly，只有本月最后一个工作日
+// （23:00）真正出报告，其余日子不进 prologue 直接退出。手动指定月份时跳过守卫。
+if (isMonthly) {
+  const monthArg = process.argv[process.argv.indexOf("--monthly") + 1];
+  if (!(monthArg && /^\d{4}-\d{2}$/.test(monthArg)) && !isLastWeekdayOfMonth(beijingDate())) {
+    console.log(
+      `Monthly report: not the last trading day of the month — skipped (use --monthly YYYY-MM to force)`,
+    );
+    process.exit(0);
+  }
+}
+
 // Dispatched first: this mode shares none of the prologue below.
 if (isCrypto) {
   try {
@@ -519,16 +544,15 @@ try {
     );
     await sendWeeklyReview(review);
   } else if (isMonthly) {
-    // Monthly mode（手动/补发）: 双 AI 月度复盘 — 净值曲线图、当月个股盈亏、
-    // 操作特点/市场态势/自评/改进方向。常规路径是 daily 在月初首跑后自动链式
-    // 补发上月月报（见 daily 分支末尾）；本分支用 `npm run monthly -- 2026-11`
-    // 指定月份重发，默认报上一个自然月。
+    // Monthly mode（月末最后交易日晚 23:00 由 scheduler 派发）: 双 AI 月度复盘 —
+    // 净值曲线图、当月个股盈亏、操作特点/市场态势/自评/改进方向。cron 在 28-31
+    // 日每晚都会派发，守卫保证只有本月最后一个工作日真正出报告；此时当日 22:00
+    // daily 已完成收盘快照并提交 DB，月内全部交易日的数据齐全（月初重置尚未
+    // 发生，期末资产从净值曲线末点推导，见 monthlyStats）。手动补发历史月份用
+    // `npm run monthly -- 2026-11`。
     console.log("\nMode: monthly review");
     const monthArg = process.argv[process.argv.indexOf("--monthly") + 1];
-    const month =
-      monthArg && /^\d{4}-\d{2}$/.test(monthArg)
-        ? monthArg
-        : beijingDate(new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)).slice(0, 7);
+    const month = monthArg && /^\d{4}-\d{2}$/.test(monthArg) ? monthArg : beijingDate().slice(0, 7);
     const monthly = await buildMonthlyReport(month);
     console.log(
       `Monthly ${month}: ` +
@@ -679,8 +703,12 @@ try {
     const longTermLabels = getLongTermLabels(tickers, prices, boards);
     await sendBrief(report, news, aiRecs, technicals, prices, fxSkipped, hotNews, nationalTeam, boards, longTermLabels, sentiment);
 
-    // 双 AI 模拟盘：DeepSeek 仓 / Gemini 仓各自独立记账，各按当日收盘价撮合
+    // 双 AI 模拟盘：DeepSeek 仓 / Gemini 仓各自独立记账，各按收盘价撮合
     // 自己 provider 的投票（按交易日幂等，重复运行不会重复下单）。仅 A 股。
+    // 简报只在周日至周四发，但每个交易日都要有收盘撮合：周日（周末）运行取到
+    // 的报价即上周五收盘价，撮合记到周五（trade_days 幂等）。
+    const todayBJ = beijingDate();
+    const fillDate = isWeekendBJ(todayBJ) ? lastWeekdayBefore(todayBJ) : todayBJ;
     const bookStates: Array<{ id: BookId; paper: PaperSummary; trades: ExecutedTrade[] }> = [];
     try {
       const cnyPrices: Record<string, number> = {};
@@ -689,8 +717,8 @@ try {
       }
       for (const id of BOOK_IDS) {
         const providerRecs = recsForProvider(aiRecs, id);
-        const exec = executeDailyTrades(id, { prices: cnyPrices, aiRecs: providerRecs, sentiment });
-        const paper = snapshotAndSummarize(id, { prices: cnyPrices });
+        const exec = executeDailyTrades(id, { date: fillDate, prices: cnyPrices, aiRecs: providerRecs, sentiment });
+        const paper = snapshotAndSummarize(id, { date: fillDate, prices: cnyPrices });
         bookStates.push({ id, paper, trades: exec.trades });
         console.log(
           `Paper trading [${id}]: ${exec.skipped ? "already filled today (skipped)" : `${exec.trades.length} trade(s)`} — position ${paper.positionPct}%, month P&L ¥${paper.pnlMonth}`,
@@ -730,48 +758,6 @@ try {
       }
     }
 
-    // 月报链：月初首个交易日的 daily 已完成上月封存（monthly_history），此时
-    // 若上一自然月的月报还没发过就补发。不占独立 cron——免费额度只剩 1 个，
-    // 而且这样天然保证月报总是跑在重置之后。
-    try {
-      const prevMonth = beijingDate(new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)).slice(0, 7);
-      const sentFile = resolve("state/monthly-report-sent.json");
-      let sent: { month?: string } = {};
-      try {
-        sent = JSON.parse(readFileSync(sentFile, "utf-8")) as { month?: string };
-      } catch {
-        /* first ever run */
-      }
-      if (sent.month !== prevMonth) {
-        const hasTrades =
-          monthlyStats("deepseek", prevMonth).trades.length > 0 ||
-          monthlyStats("gemini", prevMonth).trades.length > 0;
-        if (hasTrades) {
-          console.log(`\nChaining monthly report for ${prevMonth}...`);
-          const monthly = await buildMonthlyReport(prevMonth);
-          await sendMonthlyReport(monthly);
-          try {
-            await sendQQText(
-              `【月度复盘】${prevMonth}\n` +
-                monthly.books
-                  .map(
-                    (b) =>
-                      `${b.label}仓:月收益${b.stats.pnl != null ? (b.stats.pnl >= 0 ? "+" : "") + b.stats.pnlPct!.toFixed(2) + "%" : "进行中"} 已平仓赢${b.stats.winCount}/亏${b.stats.lossCount}`,
-                  )
-                  .join("\n") +
-                `\n详细曲线与两个 AI 的自我复盘见邮件`,
-            );
-          } catch (err) {
-            console.warn(`⚠ QQ monthly push failed: ${(err as Error).message}`);
-          }
-        }
-        mkdirSync(dirname(sentFile), { recursive: true });
-        writeFileSync(sentFile, JSON.stringify({ month: prevMonth, at: new Date().toISOString() }));
-        console.log(`Monthly report for ${prevMonth}: ${hasTrades ? "sent" : "skipped (no trades)"}`);
-      }
-    } catch (err) {
-      console.warn(`⚠ Monthly report chain failed: ${(err as Error).message}`);
-    }
     try {
       await sendTelegramBrief(report, news, aiRecs, technicals, prices);
     } catch (err) {

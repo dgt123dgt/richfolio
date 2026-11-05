@@ -704,12 +704,19 @@ export function monthlyStats(book: BookId, month: string): MonthStats {
   const lossCount = closed.filter((r) => r.realized! <= 0).length;
   const holdDays = closed.map((r) => r.holdDays ?? 0).filter((d) => d >= 0);
 
+  // 月报在月末最后交易日晚跑（23:00），此时月初重置还没发生、monthly_history
+  // 还没有该月的行——期末资产从净值曲线最后一点（=最后一日收盘快照）推导。
+  const endTotal = hist?.end_total ?? (equityCurve.length > 0 ? equityCurve[equityCurve.length - 1].total : null);
+  const pnl = hist?.pnl ?? (endTotal != null ? round2(endTotal - startCapital) : null);
+  const pnlPct =
+    hist?.pnl_pct ?? (pnl != null && startCapital > 0 ? round2((pnl / startCapital) * 100) : null);
+
   return {
     month,
     startCapital,
-    endTotal: hist?.end_total ?? null,
-    pnl: hist?.pnl ?? null,
-    pnlPct: hist?.pnl_pct ?? null,
+    endTotal,
+    pnl,
+    pnlPct,
     equityCurve,
     peak,
     trough,
