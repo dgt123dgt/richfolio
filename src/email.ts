@@ -169,13 +169,16 @@ function isMultiAI(rec: AIBuyRecommendation): boolean {
 
 // Per-provider breakdown shown beneath the consensus reason. Each row:
 // short tag (G/C/...) · provider label · action badge · confidence · short reason.
-function buildProvidersBreakdown(rec: AIBuyRecommendation): string {
+function buildProvidersBreakdown(
+  rec: AIBuyRecommendation,
+  zh: (text: string) => string = (text) => text,
+): string {
   if (!isMultiAI(rec)) return "";
   const providers = rec.providers!;
   const rows = providers
     .map((p) => {
-      const reasonSnippet =
-        p.reason.length > 140 ? p.reason.slice(0, 137).trimEnd() + "…" : p.reason;
+      const full = zh(p.reason);
+      const reasonSnippet = full.length > 140 ? full.slice(0, 137).trimEnd() + "…" : full;
       return `
     <tr>
       <td style="padding:4px 8px 4px 0;vertical-align:top;white-space:nowrap;">
@@ -307,6 +310,29 @@ function buildAISection(
   // as a contradiction. There, the watch actionable cards ARE the main list;
   // the boxed 观察名单 block only renders when a real portfolio exists above.
   const hasPortfolioRecs = portfolioRecs.length > 0;
+
+  // AI prose often cites sibling stocks by raw code ("与 002463 同属…"). Swap
+  // every known code for its Chinese display name so the brief reads in
+  // Chinese; the exchange suffix is optional in the match.
+  const nameMap = new Map<string, string>();
+  for (const ticker of new Set([
+    ...aiRecs.map((r) => r.ticker),
+    ...Object.keys(technicals),
+    ...Object.keys(priceData),
+  ])) {
+    const name = displayName(ticker);
+    if (name !== ticker) nameMap.set(ticker, name);
+  }
+  const zh = (text: string): string => {
+    for (const [ticker, name] of nameMap) {
+      const base = ticker.replace(/\.(SS|SZ)$/i, "");
+      text = text.replace(
+        new RegExp(`\\b${base}(?:\\.(?:SS|SZ))?\\b`, "gi"),
+        () => name,
+      );
+    }
+    return text;
+  };
   const topActionable = hasPortfolioRecs ? actionable : watchActionable;
   const topOthers = hasPortfolioRecs ? others : watchOthers;
 
@@ -319,8 +345,8 @@ function buildAISection(
       &nbsp;${confidenceBar(rec.confidence)}${isMultiAI(rec) ? `<span style="font-size:10px;color:${S.muted};margin-left:6px;">avg</span>` : ""}${priceTag(rec.ticker)}
       ${rec.suggestedBuyValue > 0 ? `<span style="float:right;font-weight:bold;color:#1a202c;">${fmt$(rec.suggestedBuyValue)}</span>` : ""}
     </div>
-    <div style="font-size:12px;color:${S.text};margin-top:4px;">${rec.reason}</div>
-    ${buildProvidersBreakdown(rec)}
+    <div style="font-size:12px;color:${S.text};margin-top:4px;">${zh(rec.reason)}</div>
+    ${buildProvidersBreakdown(rec, zh)}
     ${buildTechnicalInsight(rec, technicals[rec.ticker])}
     ${
       hasStrongBuyVote(rec) && rec.analysisUrl
@@ -336,7 +362,7 @@ function buildAISection(
     <div style="padding:4px 0;font-size:12px;">
       <span style="font-weight:bold;" title="${escapeHtmlAttr(rec.tickerFullName ?? rec.ticker)}">${displayName(rec.ticker, rec.tickerFullName)}</span> <span style="font-size:10px;color:${S.muted};">${rec.ticker}</span>
       &nbsp;${chipsFor(rec.ticker)}${actionBadge(rec.action)}${valueRatingBadge(rec.valueRating)}${priceTag(rec.ticker)}
-      <span style="color:${S.muted};margin-left:8px;">${rec.reason}</span>
+      <span style="color:${S.muted};margin-left:8px;">${zh(rec.reason)}</span>
     </div>`;
 
   const emptyBox = `

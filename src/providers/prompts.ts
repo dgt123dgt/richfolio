@@ -2,13 +2,22 @@ import type { AllocationReport } from "../analyze.js";
 import type { QuoteData } from "../fetchPrices.js";
 import type { NewsItem } from "../fetchNews.js";
 import type { TechnicalData } from "../fetchTechnicals.js";
-import { defaultCurrency } from "../config.js";
+import { defaultCurrency, tickerNames, runtimeTickerNames } from "../config.js";
 import { formatMoney, classifyEpsBasis, describeEpsBasis } from "../util.js";
 
 // ── Bond ETF asset class lists ─────────────────────────────────────
 // These are referenced by the prompt builders AND by guards.ts. The guards
 // module keeps its own copy to remain self-contained, but if you change
 // these here, mirror the SHORT_DURATION_BOND_ETFS list there too.
+
+/**
+ * Best human-readable name for a ticker. The Chinese name (config or the
+ * Guba runtime table) wins so the AI writes "与 生益科技 同属…" instead of
+ * "与 002463 同属…" in the reasons it produces.
+ */
+function bestName(ticker: string, fallback: string | null | undefined): string {
+  return tickerNames[ticker] ?? runtimeTickerNames[ticker] ?? fallback ?? ticker;
+}
 
 // Short-duration bond ETFs (1-5 year) — essentially cash equivalents, ~2% annual
 // price range. No equity-style upside. Hard cap at BUY — STRONG BUY is never
@@ -124,7 +133,7 @@ function buildPrompt(
     const ticker = item.ticker.toUpperCase();
     const isShortBond = SHORT_DURATION_BOND_ETFS.has(ticker);
     const isLongBond = LONG_DURATION_BOND_ETFS.has(ticker);
-    const fullName = item.tickerFullName || item.ticker;
+    const fullName = bestName(item.ticker, item.tickerFullName);
 
     const priceLine =
       item.originalCurrency !== defaultCurrency
@@ -346,7 +355,7 @@ function buildPrompt(
       })
       .join("; ");
 
-    const fullName = item.tickerFullName || item.ticker;
+    const fullName = bestName(item.ticker, item.tickerFullName);
     // A cross-pair is quoted in its own coin and never FX-converted, so its
     // figures must be labelled with that coin — not the report currency, and
     // certainly not "originally X", which implies a conversion that never
@@ -681,7 +690,8 @@ export function languageDirective(): string {
     return `
 
 # OUTPUT LANGUAGE
-用简体中文撰写所有供人阅读的文本：value summary、technical summary、risk flags、signals、reason、allocation context 等。但以下内容保持原样、严禁翻译：股票代码、币种代码、数字、JSON 字段名，以及 action 枚举值（"STRONG BUY"/"BUY"/"HOLD"/"WAIT"/"TRIM"/"OK"）。`;
+用简体中文撰写所有供人阅读的文本：value summary、technical summary、risk flags、signals、reason、allocation context 等。但以下内容保持原样、严禁翻译：币种代码、数字、JSON 字段名，以及 action 枚举值（"STRONG BUY"/"BUY"/"HOLD"/"WAIT"/"TRIM"/"OK"）。
+提及某只股票时，使用它在数据里显示的名称（每个代码后括号中的名字，多为中文名），不要在正文里只写 "002463" 这类裸代码；确需标注代码时放在名称后的括号里一次即可。`;
   }
   return `
 
