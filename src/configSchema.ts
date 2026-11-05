@@ -190,7 +190,10 @@ export function parsePortfolioConfig(json: unknown): ParsedConfig {
   if (!isPlainObject(json)) throw new Error("config.json must be a JSON object.");
   const warnings: string[] = [];
 
-  const targetPortfolio = numberMap(json, "targetPortfolio", true);
+  // Portfolio tracking is now optional: omit both maps for a pure watch-list
+  // setup (e.g. hot-stock screening), where no allocation math or money stats
+  // are computed.
+  const targetPortfolio = numberMap(json, "targetPortfolio", false);
   const currentHoldings = numberMap(json, "currentHoldings", false);
 
   const rawWatching = json.watching;
@@ -229,7 +232,12 @@ export function parsePortfolioConfig(json: unknown): ParsedConfig {
         "See config.example.json.",
     );
   }
-  if (typeof json.totalPortfolioValue !== "number") {
+  if (json.totalPortfolioValue === undefined) {
+    if (Object.keys(json.targetPortfolio ?? {}).length > 0 || Object.keys(json.currentHoldings ?? {}).length > 0) {
+      throw new Error('config.json: "totalPortfolioValue" is required when a portfolio is configured.');
+    }
+    warnings.push('config.json: "totalPortfolioValue" missing — watch-only mode, no money sizing.');
+  } else if (typeof json.totalPortfolioValue !== "number") {
     throw new Error('config.json: "totalPortfolioValue" must be a number.');
   }
 
@@ -266,7 +274,7 @@ export function parsePortfolioConfig(json: unknown): ParsedConfig {
   return {
     targetPortfolio,
     currentHoldings,
-    totalPortfolioValue: json.totalPortfolioValue,
+    totalPortfolioValue: (json.totalPortfolioValue as number | undefined) ?? 0,
     defaultCurrency,
     tickerNames,
     hotStocks: { ...DEFAULT_HOT_STOCKS, ...(json.hotStocks as object | undefined) },

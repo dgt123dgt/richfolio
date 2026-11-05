@@ -263,7 +263,7 @@ async function filterNewsWithGemini(
   }
   if (entries.length === 0) return allNews;
 
-  const prompt = `You are a financial news relevance filter for an investment portfolio tracker. For each ticker below, determine which headlines are actually about the company/fund's financial context: stock performance, earnings, market analysis, sector trends, company strategy, M&A, regulatory impact, or macroeconomic effects on the ticker.
+  const promptHead = `You are a financial news relevance filter for an investment portfolio tracker. For each ticker below, determine which headlines are actually about the company/fund's financial context: stock performance, earnings, market analysis, sector trends, company strategy, M&A, regulatory impact, or macroeconomic effects on the ticker.
 
 Headlines may be in English or Chinese — both are expected (Chinese ones come from Eastmoney for A-share tickers); judge them the same way.
 
@@ -276,16 +276,33 @@ REMOVE headlines that are:
 
 KEEP only headlines about: stock price, earnings, revenue, analyst ratings, market trends, company leadership, regulatory news, sector performance, fund flows, or economic indicators relevant to the ticker.
 
-Tickers and their matched headlines:
-${entries.map((e) => `${e.ticker}:\n${e.headlines.map((h, i) => `  [${i}] ${h}`).join("\n")}`).join("\n\n")}
+Tickers and their matched headlines:`;
 
-For each ticker, return:
+  const promptTail = `For each ticker, return:
 - articles: array of relevant headlines with their index, sentiment (bullish/bearish/neutral), and impact (high/medium/low) on the stock price
 - overallSentiment: the aggregate sentiment across all relevant headlines (bullish/bearish/neutral/mixed)
 If no headlines are relevant, return an empty articles array and "neutral" for overallSentiment.`;
 
-  try {
-    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+  // Chunk the tickers — at ~100-ticker scale a single call's response gets too
+  // large and arrives truncated/unparseable.
+  const CHUNK_SIZE = 30;
+  const chunks: { ticker: string; headlines: string[] }[][] = [];
+  for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+    chunks.push(entries.slice(i, i + CHUNK_SIZE));
+  }
+
+  const result: Record<string, NewsItem[]> = {};
+  const sentimentMap: Record<string, TickerSentiment> = {};
+  for (const ticker of Object.keys(allNews)) result[ticker] = [];
+
+  const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+  for (const chunk of chunks) {
+    const chunkedPrompt = [
+      promptHead,
+      chunk.map((e) => `${e.ticker}:\n${e.headlines.map((h, i) => `  [${i}] ${h}`).join("\n")}`).join("\n\n"),
+      promptTail,
+    ].join("\n\n");
 
     // Retry logic for transient Gemini errors (503, 429)
     let responseText: string | undefined;
@@ -293,7 +310,7 @@ If no headlines are relevant, return an empty articles array and "neutral" for o
       try {
         const response = await ai.models.generateContent({
           model: GEMINI_MODEL,
-          contents: prompt,
+          contents: chunkedPrompt,
           config: {
             responseMimeType: "application/json",
             responseSchema: relevanceSchema,
@@ -318,24 +335,26 @@ If no headlines are relevant, return an empty articles array and "neutral" for o
     }
     if (!responseText) return allNews;
 
-    const filtered = JSON.parse(responseText) as Array<{
+    let filtered: Array<{
       ticker: string;
       articles: Array<{ index: number; sentiment: string; impact: string }>;
       overallSentiment: string;
     }>;
-
-    const result: Record<string, NewsItem[]> = {};
-    const sentimentMap: Record<string, TickerSentiment> = {};
-    // Start with empty arrays for all tickers
-    for (const ticker of Object.keys(allNews)) {
-      result[ticker] = [];
+    try {
+      filtered = JSON.parse(responseText);
+      if (!Array.isArray(filtered)) throw new Error("non-array response");
+    } catch {
+      console.warn("  ⚠ Gemini news filter chunk unparseable — keeping that chunk unfiltered");
+      continue;
     }
-    // Keep only Gemini-approved articles with sentiment
+    // Keep only Gemini-approved articles with sentiment. Defensive parsing:
+    // at ~100-ticker scale the model occasionally omits fields per entry.
     for (const entry of filtered) {
+      if (!entry?.ticker || !Array.isArray(entry.articles)) continue;
       const original = allNews[entry.ticker];
       if (!original) continue;
       result[entry.ticker] = entry.articles
-        .filter((a) => a.index >= 0 && a.index < original.length)
+        .filter((a) => a && Number.isFinite(a.index) && a.index >= 0 && a.index < original.length)
         .map((a) => ({
           ...original[a.index],
           sentiment: (["bullish", "bearish", "neutral"].includes(a.sentiment)
@@ -351,24 +370,19 @@ If no headlines are relevant, return an empty articles array and "neutral" for o
           : "neutral"
       ) as TickerSentiment;
     }
-    // Store sentiment map for external access
-    _lastSentimentMap = sentimentMap;
-
-    const before = Object.values(allNews).reduce((s, a) => s + a.length, 0);
-    const after = Object.values(result).reduce((s, a) => s + a.length, 0);
-    if (before !== after) {
-      console.log(
-        `  Gemini filter: ${before} → ${after} articles (removed ${before - after} irrelevant)`,
-      );
-    }
-
-    return result;
-  } catch (err) {
-    console.warn(
-      `  ⚠ Gemini news filter failed, using unfiltered results: ${(err as Error).message}`,
-    );
-    return allNews;
   }
+  // Store sentiment map for external access
+  _lastSentimentMap = sentimentMap;
+
+  const before = Object.values(allNews).reduce((s, a) => s + a.length, 0);
+  const after = Object.values(result).reduce((s, a) => s + a.length, 0);
+  if (before !== after) {
+    console.log(
+      `  Gemini filter: ${before} → ${after} articles (removed ${before - after} irrelevant)`,
+    );
+  }
+
+  return result;
 }
 
 // ── Sentiment map (populated by Gemini filter) ────────────────────

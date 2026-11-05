@@ -1,7 +1,7 @@
 import { Resend } from "resend";
-import { recipientEmail, defaultCurrency, displayName } from "./config.js";
-import type { AllocationItem, AllocationReport } from "./analyze.js";
-import { escapeHtmlAttr, formatMoney } from "./util.js";
+import { recipientEmail, displayName } from "./config.js";
+import { escapeHtmlAttr } from "./util.js";
+import type { WeeklyReview, PredictionOutcome } from "./weeklyReview.js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -19,44 +19,56 @@ const S = {
   border: "#e2e8f0",
 } as const;
 
-// ── Helpers ─────────────────────────────────────────────────────────
-const fmt$ = (n: number) => formatMoney(n, defaultCurrency);
+const PROVIDER_LABELS: Record<string, string> = {
+  gemini: "Gemini",
+  deepseek: "DeepSeek",
+};
 
-function fmtPct(n: number): string {
+function pct(n: number): string {
   return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
 }
 
-function actionLabel(gap: number): { text: string; color: string } {
-  if (gap > 1) return { text: "买入", color: S.red };
-  if (gap < -1) return { text: "减持", color: S.yellow };
-  return { text: "达标", color: S.green };
+function outcomeRow(o: PredictionOutcome, highlight: string): string {
+  const color = o.pctChange >= 0 ? S.green : S.red;
+  return `
+    <tr>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};font-size:10px;color:${S.muted};">${o.date.slice(5)}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(o.ticker)}">${displayName(o.ticker)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${o.ticker}</div></td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;">${highlight}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${color};">${pct(o.pctChange)}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;font-size:10px;">${o.providerId === "gemini" ? "Gemini" : o.providerId === "deepseek" ? "DeepSeek" : o.providerId}</td>
+    </tr>`;
 }
 
 // ── Build HTML ──────────────────────────────────────────────────────
-export function buildWeeklyEmailHtml(report: AllocationReport): string {
+export function buildWeeklyReviewHtml(review: WeeklyReview): string {
   const date = new Date().toLocaleDateString("zh-CN", {
-    weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 
-  // Cross-currency footnote must consider held-only holdings too — they're real
-  // positions, just untracked, so a GBp/ZAc one still needs the FX note.
-  const hasCrossCurrency = [...report.items, ...report.untrackedItems].some(
-    (i) => i.originalCurrency !== defaultCurrency,
-  );
-  const onTarget = report.items.filter((i) => Math.abs(i.gapPct) <= 1 && i.targetPct > 0);
-  const underweight = report.items.filter((i) => i.gapPct > 1);
-  const overweight = report.items.filter((i) => i.gapPct < -1 && i.targetPct > 0);
-  // Held-only tickers, shown as a neutral list. They come from untrackedItems
-  // now, which keeps them out of the action table entirely — with an implied 0%
-  // target their gap is always negative, so they used to draw a standing TRIM
-  // that Richfolio (buy-only, no sell logic) can't actually justify.
-  const noTarget = report.untrackedItems.filter((i) => i.currentValue > 0);
+  const perProviderRows = Object.entries(review.perProvider)
+    .map(([id, b]) => {
+      const scored = b.hits + b.misses;
+      const acc = scored > 0 ? ((b.hits / scored) * 100).toFixed(0) : "—";
+      return `<td style="text-align:center;padding:8px;">
+        <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">${PROVIDER_LABELS[id] ?? id}</div>
+        <div style="font-size:18px;font-weight:bold;color:#1a202c;">${acc}%<div style="font-size:10px;color:${S.muted};font-weight:normal;">准${b.hits} / 错${b.misses}</div></div>
+      </td>`;
+    })
+    .join("");
 
-  // Rebalancing action table: tracked allocation items only.
-  const sorted = [...report.items].sort((a, b) => Math.abs(b.gapPct) - Math.abs(a.gapPct));
+  // Worst misses first for the failure table.
+  const worstMisses = [...review.misses].sort((a, b) => a.pctChange - b.pctChange).slice(0, 20);
+  const missRows = worstMisses
+    .map((m) => outcomeRow(m, `<span style="color:${S.red};font-size:11px;font-weight:bold;">${m.action}</span>`))
+    .join("");
+  const hitRows = [...review.hits]
+    .sort((a, b) => b.pctChange - a.pctChange)
+    .slice(0, 20)
+    .map((h) => outcomeRow(h, `<span style="color:${S.green};font-size:11px;font-weight:bold;">${h.action}</span>`))
+    .join("");
 
   return `<!DOCTYPE html>
 <html>
@@ -66,105 +78,87 @@ export function buildWeeklyEmailHtml(report: AllocationReport): string {
 
 <!-- Header -->
 <tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:22px;color:#ffffff;">每周再平衡报告</h1>
-  <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date}</p>
+  <h1 style="margin:0;font-size:22px;color:#ffffff;">每周预测复盘</h1>
+  <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date} · 覆盖 ${review.daysCovered.length} 个预测日（${review.daysCovered[0] ?? "—"} ~ ${review.daysCovered[review.daysCovered.length - 1] ?? "—"}）</p>
+  <p style="margin:4px 0 0;color:#e0f2fe;font-size:12px;">判定规则：买入后一周涨跌 ≥±3% 记准/错；观望反之；持有不计分。</p>
 </td></tr>
 
-<!-- Portfolio Stats -->
+<!-- Score stats -->
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-bottom:1px solid ${S.border};">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">持仓市值（${defaultCurrency}）</div>
-      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${fmt$(report.totalCurrentValue)}</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">总预测次数</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${review.totalPredictions}</div>
     </td>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">组合 Beta</div>
-      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${report.portfolioBeta?.toFixed(2) ?? "—"}</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">准确率</div>
+      <div style="font-size:20px;font-weight:bold;color:${review.accuracy >= 50 ? S.green : S.red};">${review.totalPredictions > 0 ? review.accuracy.toFixed(0) + "%" : "—"}</div>
     </td>
     <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">达标数量</div>
-      <div style="font-size:20px;font-weight:bold;color:${S.green};">${onTarget.length}/${report.items.filter((i) => i.targetPct > 0).length}</div>
+      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">准 / 错</div>
+      <div style="font-size:20px;font-weight:bold;color:#1a202c;"><span style="color:${S.green};">${review.hits.length}</span> / <span style="color:${S.red};">${review.misses.length}</span></div>
     </td>
-    <td style="text-align:center;padding:8px;">
-      <div style="font-size:11px;color:${S.muted};text-transform:uppercase;">预估年股息</div>
-      <div style="font-size:20px;font-weight:bold;color:#1a202c;">${fmt$(report.estimatedAnnualDividend)}</div>
-    </td>
+    ${perProviderRows}
   </tr></table>
 </td></tr>
 
-<!-- Rebalancing Actions -->
-<tr><td style="padding:20px 24px 8px;background:${S.cardBg};">
-  <h2 style="margin:0;font-size:16px;color:${S.blue};">再平衡操作</h2>
-  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">按偏离目标的幅度排序。偏离 ±1% 以内视为达标。</p>
+${
+  !review.hasData
+    ? `<tr><td style="padding:24px;background:${S.cardBg};border-top:1px solid ${S.border};font-size:13px;color:${S.muted};">
+  本周没有可复盘的预测记录（复盘功能刚上线，需要积累几天的每日简报数据后才有意义）。
+</td></tr>`
+    : `
+<!-- Failure diagnosis -->
+${
+  review.diagnosis
+    ? `<tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">失败因素诊断（AI 分析）</h2>
+</td></tr>
+<tr><td style="padding:0 24px 16px;background:${S.cardBg};">
+  <div style="font-size:12px;color:${S.text};line-height:1.7;white-space:pre-line;">${review.diagnosis}</div>
+</td></tr>`
+    : ""
+}
+
+<!-- Worst misses -->
+<tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
+  <h2 style="margin:0;font-size:16px;color:${S.red};">错误预测 TOP（亏最多在前）</h2>
 </td></tr>
 <tr><td style="padding:0 24px 16px;background:${S.cardBg};">
   <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
     <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};">名称</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:center;">操作</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">当前</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">目标</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">缺口</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">金额</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">日期</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">名称</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;">预测</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">一周实际</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;">来源</td>
     </tr>
-    ${sorted
-      .filter((i) => i.targetPct > 0 || i.currentValue > 0)
-      .map((item) => {
-        const action = actionLabel(item.gapPct);
-        return `
-    <tr>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};font-weight:bold;" title="${escapeHtmlAttr(item.tickerFullName ?? item.ticker)}">${displayName(item.ticker, item.tickerFullName)}<div style="font-size:10px;color:${S.muted};font-weight:normal;">${item.ticker}</div></td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:center;">
-        <span style="background:${action.color};color:#000;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:bold;">${action.text}</span>
-      </td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.currentPct.toFixed(1)}%</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.targetPct.toFixed(1)}%</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${action.color};">${fmtPct(item.gapPct)}</td>
-      <td style="padding:5px 3px;border-bottom:1px solid ${S.border};text-align:right;">${item.suggestedBuyValue > 0 ? `买入 ${fmt$(item.suggestedBuyValue)}${item.overlapDiscount > 0 ? `<div style="font-size:10px;color:${S.muted};">-${fmt$(item.overlapDiscount)} 重合扣减</div>` : ""}` : "—"}</td>
-    </tr>`;
-      })
-      .join("")}
+    ${missRows || `<tr><td colspan="5" style="padding:8px;color:${S.muted};">本周没有错误预测 🎉</td></tr>`}
   </table>
 </td></tr>
 
-${
-  overweight.length > 0
-    ? `
-<!-- Overweight Warning -->
-<tr><td style="padding:16px 24px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h3 style="margin:0;font-size:14px;color:${S.yellow};">⚠ 超配持仓</h3>
-  <p style="margin:4px 0 0;font-size:12px;color:${S.text};">
-    ${overweight.map((i) => `<b>${displayName(i.ticker, i.tickerFullName)}</b>（${i.ticker}，当前 ${i.currentPct.toFixed(1)}% vs 目标 ${i.targetPct.toFixed(1)}%）`).join("，")}
-  </p>
+<!-- Correct calls -->
+<tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
+  <h2 style="margin:0;font-size:16px;color:${S.green};">正确预测 TOP</h2>
+</td></tr>
+<tr><td style="padding:0 24px 16px;background:${S.cardBg};">
+  <table width="100%" cellpadding="0" cellspacing="0" style="font-size:12px;">
+    <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">日期</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">名称</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;">预测</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">一周实际</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;">来源</td>
+    </tr>
+    ${hitRows || `<tr><td colspan="5" style="padding:8px;color:${S.muted};">本周没有达到 ±3% 的正确预测。</td></tr>`}
+  </table>
 </td></tr>`
-    : ""
-}
-
-${
-  noTarget.length > 0
-    ? `
-<!-- No-target holdings -->
-<tr><td style="padding:16px 24px;background:${S.cardBg};border-top:1px solid ${S.border};">
-  <h3 style="margin:0;font-size:14px;color:${S.muted};">未纳入目标组合的持仓</h3>
-  <p style="margin:4px 0 0;font-size:12px;color:${S.text};">
-    ${noTarget.map((i) => `<b>${displayName(i.ticker, i.tickerFullName)}</b>（${i.ticker}，${fmt$(i.currentValue)}，${i.currentPct.toFixed(1)}%）`).join("，")}
-  </p>
-</td></tr>`
-    : ""
-}
-
-${
-  hasCrossCurrency
-    ? `<tr><td style="padding:10px 24px;background:${S.cardBg};border-top:1px solid ${S.border};font-size:11px;color:${S.muted};">
-  金额以 ${defaultCurrency} 显示 — 检测到多币种组合。
-</td></tr>`
-    : ""
 }
 
 <!-- Footer -->
 <tr><td style="padding:16px 24px;background:${S.accent};border-radius:0 0 8px 8px;text-align:center;">
   <p style="margin:0;font-size:11px;color:#e0f2fe;">
-    修改 CONFIG_JSON 变量可更新你的投资组合 · Powered by Richfolio
+    每周策略复盘 · Powered by Richfolio
   </p>
 </td></tr>
 
@@ -173,14 +167,14 @@ ${
 </html>`;
 }
 
-// ── Send weekly email ───────────────────────────────────────────────
-export async function sendWeeklyBrief(report: AllocationReport): Promise<void> {
-  const html = buildWeeklyEmailHtml(report);
+// ── Send email ──────────────────────────────────────────────────────
+export async function sendWeeklyReview(review: WeeklyReview): Promise<void> {
+  const html = buildWeeklyReviewHtml(review);
 
   const { error } = await resend.emails.send({
     from: "Richfolio <onboarding@resend.dev>",
     to: recipientEmail,
-    subject: `Richfolio 每周再平衡 — ${new Date().toLocaleDateString("zh-CN")}`,
+    subject: `Richfolio 周度复盘 — 准确率 ${review.totalPredictions > 0 ? review.accuracy.toFixed(0) + "%" : "无数据"}（${new Date().toLocaleDateString("zh-CN")}）`,
     html,
   });
 
@@ -188,5 +182,5 @@ export async function sendWeeklyBrief(report: AllocationReport): Promise<void> {
     throw new Error(`Resend error: ${JSON.stringify(error)}`);
   }
 
-  console.log(`Weekly email sent to ${recipientEmail}`);
+  console.log(`Weekly review email sent to ${recipientEmail}`);
 }

@@ -9,8 +9,10 @@ import { runtimeTickerNames } from "./config.js";
 
 const RANK_URL = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList";
 const NAME_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get";
-// Over-fetch: thresholded-board codes get filtered out before taking `count`.
-const RANK_FETCH_SIZE = 50;
+// The rank API caps a single page at 100 rows. Over-fetch 2 pages so that
+// after thresholded-board filtering there are still enough names for `count`.
+const RANK_FETCH_SIZE = 100;
+const RANK_MAX_PAGES = 3;
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   Referer: "https://guba.eastmoney.com/",
@@ -48,28 +50,34 @@ function toConfigTicker(sc: string): string | null {
  * whether to degrade gracefully.
  */
 export async function fetchHotAshareStocks(count: number): Promise<HotStock[]> {
-  const res = await fetch(RANK_URL, {
-    method: "POST",
-    headers: { ...HEADERS, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      appId: "appId01",
-      globalId: "786e4c21-70dc-435a-93bb-38",
-      marketType: "",
-      pageNo: 1,
-      pageSize: RANK_FETCH_SIZE,
-    }),
-  });
-  if (!res.ok) throw new Error(`Guba rank ${res.status}`);
-
-  const json = (await res.json()) as { data?: Array<{ sc: string; rk: number }> };
-  const rows = (json.data ?? []).filter((row) => isMainBoard(row.sc));
-
+  // Page through the ranking until `count` eligible names are collected.
   const stocks: HotStock[] = [];
-  for (const row of rows) {
-    const ticker = toConfigTicker(row.sc);
-    if (!ticker) continue;
-    stocks.push({ ticker, name: "", rank: row.rk });
-    if (stocks.length >= count) break;
+  const seen = new Set<string>();
+  for (let page = 1; page <= RANK_MAX_PAGES && stocks.length < count; page++) {
+    const res = await fetch(RANK_URL, {
+      method: "POST",
+      headers: { ...HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appId: "appId01",
+        globalId: "786e4c21-70dc-435a-93bb-38",
+        marketType: "",
+        pageNo: page,
+        pageSize: RANK_FETCH_SIZE,
+      }),
+    });
+    if (!res.ok) throw new Error(`Guba rank ${res.status}`);
+
+    const json = (await res.json()) as { data?: Array<{ sc: string; rk: number }> };
+    const rows = (json.data ?? []).filter((row) => isMainBoard(row.sc));
+    if (rows.length === 0) break; // end of ranking
+
+    for (const row of rows) {
+      const ticker = toConfigTicker(row.sc);
+      if (!ticker || seen.has(ticker)) continue;
+      seen.add(ticker);
+      stocks.push({ ticker, name: "", rank: row.rk });
+      if (stocks.length >= count) break;
+    }
   }
   if (stocks.length === 0) return [];
 

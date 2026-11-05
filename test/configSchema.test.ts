@@ -72,7 +72,10 @@ describe("parsePortfolioConfig", () => {
 
   const bad: Array<[string, unknown, RegExp]> = [
     ["not an object", 42, /must be a JSON object/],
-    ["missing targetPortfolio", { totalPortfolioValue: 1 }, /"targetPortfolio" must be an object/],
+    // targetPortfolio/currentHoldings are optional now (watch-only mode);
+    // only a WRONG-TYPE portfolio throws.
+    ["non-object targetPortfolio", { ...minimal, targetPortfolio: 42 }, /"targetPortfolio" must be an object/],
+    ["portfolio without value", { targetPortfolio: { VOO: 10 } }, /"totalPortfolioValue" is required/],
     ["non-number target", { ...minimal, targetPortfolio: { VOO: "20" } }, /targetPortfolio\.VOO/],
     ["non-number holding", { ...minimal, currentHoldings: { VOO: "x" } }, /currentHoldings\.VOO/],
     ["string portfolio value", { ...minimal, totalPortfolioValue: "1000" }, /must be a number/],

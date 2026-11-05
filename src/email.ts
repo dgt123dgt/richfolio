@@ -451,18 +451,11 @@ export function buildEmailHtml(
       ? buildAISection(aiRecs, technicals, priceData)
       : buildFallbackBuysSection(report);
 
-  return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="margin:0;padding:0;background:${S.bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:${S.text};font-size:14px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;padding:20px;">
-
-<!-- Header -->
-<tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
-  <h1 style="margin:0;font-size:22px;color:#ffffff;">Richfolio 每日简报</h1>
-  <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date}</p>
-</td></tr>
-
+  // Watch-only mode (no portfolio configured): hide money stats and the
+  // allocation table, and show the rule-based technical screen instead.
+  const hasPortfolio = report.items.length > 0;
+  const statsSection = hasPortfolio
+    ? `
 <!-- Portfolio Stats -->
 <tr><td style="padding:16px 24px;background:${S.cardBg};border-bottom:1px solid ${S.border};">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -479,11 +472,28 @@ export function buildEmailHtml(
       <div style="font-size:20px;font-weight:bold;color:#1a202c;">${fmt$(report.estimatedAnnualDividend)}</div>
     </td>
   </tr></table>
+</td></tr>`
+    : techScreenSection(technicals, priceData);
+
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:${S.bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:${S.text};font-size:14px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;padding:20px;">
+
+<!-- Header -->
+<tr><td style="padding:20px 24px;background:${S.accent};border-radius:8px 8px 0 0;">
+  <h1 style="margin:0;font-size:22px;color:#ffffff;">Richfolio 每日简报</h1>
+  <p style="margin:6px 0 0;color:#e0f2fe;font-size:13px;">${date}</p>
 </td></tr>
+
+${statsSection}
 
 <!-- Buy Recommendations (AI or fallback) -->
 ${buysSection}
-
+${
+  hasPortfolio
+    ? `
 <!-- Full Allocation Table -->
 <tr><td style="padding:20px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
   <h2 style="margin:0;font-size:16px;color:${S.blue};">配置明细</h2>
@@ -519,6 +529,9 @@ ${buysSection}
       .join("")}
   </table>
 </td></tr>
+`
+    : ""
+}
 
 <!-- News Digest -->
 ${
@@ -579,6 +592,76 @@ ${
 </table>
 </body>
 </html>`;
+}
+
+// ── Technical screen (watch-only mode) ──────────────────────────────
+// Rule-based "can I buy this today?" verdict per hot stock, rendered for the
+// whole top-N list. Pure technical rules — the AI section adds news sentiment
+// and deeper reasoning on top of this.
+function techScreenSection(
+  technicals: Record<string, TechnicalData>,
+  priceData: Record<string, QuoteData>,
+): string {
+  const entries = Object.entries(technicals);
+  if (entries.length === 0) return "";
+
+  const rows = entries
+    .map(([ticker, t]) => {
+      const price = priceData[ticker]?.price;
+      const tags: { text: string; color: string }[] = [];
+      if (t.rsi14 != null) {
+        if (t.rsi14 >= 70) tags.push({ text: "超买·勿追", color: S.red });
+        else if (t.rsi14 <= 30) tags.push({ text: "超卖·关注", color: S.green });
+      }
+      if (t.goldenCross) tags.push({ text: "金叉", color: S.green });
+      if (t.deathCross) tags.push({ text: "死叉", color: S.red });
+      if (t.macdCrossover === "bullish") tags.push({ text: "MACD看多", color: S.green });
+      if (t.macdCrossover === "bearish") tags.push({ text: "MACD看空", color: S.red });
+      if (t.priceVsSma50 != null) {
+        tags.push(
+          t.priceVsSma50 > 0
+            ? { text: "站上50日线", color: S.green }
+            : { text: "跌破50日线", color: S.red },
+        );
+      }
+      if (tags.length === 0) {
+        tags.push({ text: `动量${MOMENTUM_LABELS[t.momentumSignal] ?? t.momentumSignal}`, color: S.muted });
+      }
+      const verdict =
+        tags.some((x) => x.color === S.red) && !tags.some((x) => x.color === S.green)
+          ? { text: "不宜买", color: S.red }
+          : tags.some((x) => x.color === S.green)
+            ? { text: "可关注", color: S.green }
+            : { text: "观望", color: S.muted };
+
+      return `
+    <tr>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};font-weight:bold;">${displayName(ticker)}<div style="font-size:9px;color:${S.muted};font-weight:normal;">${ticker}</div></td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">${price != null ? fmt$(price) : "—"}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">RSI ${t.rsi14 ?? "—"}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">${tags.map((x) => `<span style="color:${x.color};font-size:10px;">${x.text}</span>`).join(" ")}</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;"><span style="color:${verdict.color};font-size:11px;font-weight:bold;">${verdict.text}</span></td>
+    </tr>`;
+    })
+    .join("");
+
+  return `
+<tr><td style="padding:16px 24px 8px;background:${S.cardBg};border-top:1px solid ${S.border};">
+  <h2 style="margin:0;font-size:16px;color:${S.blue};">技术面快筛</h2>
+  <p style="margin:4px 0 0;font-size:11px;color:${S.muted};">按当日热度排序 · 规则判定仅供参考，深度分析见下方 AI 建议。</p>
+</td></tr>
+<tr><td style="padding:0 24px 16px;background:${S.cardBg};">
+  <table width="100%" cellpadding="0" cellspacing="0" style="font-size:11px;">
+    <tr style="color:${S.muted};font-size:10px;text-transform:uppercase;">
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">名称</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">现价</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">RSI</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">信号</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:center;">结论</td>
+    </tr>
+    ${rows}
+  </table>
+</td></tr>`;
 }
 
 // ── Send email ──────────────────────────────────────────────────────

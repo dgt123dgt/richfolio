@@ -22,12 +22,12 @@ import { aiAnalyze } from "./aiAnalysis.js";
 import { sendBrief } from "./email.js";
 import {
   sendTelegramBrief,
-  sendWeeklyTelegram,
   sendIntradayTelegram,
   sendRefreshTelegram,
 } from "./telegram.js";
 import { applyLatestPrice, buildPriceMap, formatMoney } from "./util.js";
-import { sendWeeklyBrief } from "./weeklyEmail.js";
+import { sendWeeklyReview } from "./weeklyEmail.js";
+import { buildWeeklyReview } from "./weeklyReview.js";
 import { saveBaseline, loadBaseline, loadReasoningHistory, saveReasoningHistory } from "./state.js";
 import { compareWithBaseline } from "./intradayCompare.js";
 import { sendIntradayAlert, sendRefreshEmail } from "./intradayEmail.js";
@@ -437,14 +437,16 @@ try {
       console.error("Telegram send failed:", (err as Error).message);
     }
   } else if (isWeekly) {
-    // Weekly mode: rebalancing report only (no news, no AI)
-    console.log("\nMode: weekly rebalancing");
-    await sendWeeklyBrief(report);
-    try {
-      await sendWeeklyTelegram(report);
-    } catch (err) {
-      console.error("Telegram send failed:", (err as Error).message);
-    }
+    // Weekly mode: prediction review — score the week's AI calls against
+    // actual price moves and diagnose the failures. No portfolio, no rebalancing.
+    console.log("\nMode: weekly prediction review");
+    const priceMap: Record<string, number> = {};
+    for (const q of Object.values(prices)) priceMap[q.ticker] = q.price;
+    const review = await buildWeeklyReview(priceMap);
+    console.log(
+      `Review: ${review.totalPredictions} predictions, ${review.hits.length} hit / ${review.misses.length} miss (${review.accuracy.toFixed(0)}% accuracy)`,
+    );
+    await sendWeeklyReview(review);
   } else if (isIntraday) {
     // Intraday mode: compare against morning baseline, alert on strengthening
     console.log("\nMode: intraday check");
