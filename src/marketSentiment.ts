@@ -85,6 +85,14 @@ export interface ConceptScore {
   phase: MarketPhase | "过渡";
   /** 板块龙头 (最高连板标的). */
   leader: { name: string; lbc: number } | null;
+  /** 板块主力净流入 (亿, 负=流出)；匹配不到板块时 null. */
+  mainNet: number | null;
+  /** 谁在买：主力大单/游资/散户承接的一句话画像. */
+  buyers: string | null;
+  /** 板块今日成交额 (亿) 与量能状态 — 仅 TOP3 抓取历史. */
+  amount: number | null;
+  amountChangePct: number | null;
+  volumeState: "放量" | "缩量" | "平量" | null;
 }
 
 // ── 资金面 ──────────────────────────────────────────────────────────
@@ -498,6 +506,98 @@ export async function fetchFundFlow(): Promise<FundFlow | null> {
   };
 }
 
+/** 谁在买 — 由主力/超大单/大单净额推断资金画像 (纯函数, 测试用). */
+export function describeBuyers(
+  mainNet: number,
+  superNet: number,
+  bigNet: number,
+): string {
+  if (Math.abs(mainNet) < 2) return "主力资金分歧不大，方向未定";
+  if (mainNet > 0) {
+    if (superNet > 0) return "超大单主导买入（机构/顶级游资加仓），散户在卖";
+    if (bigNet > 0) return "游资中坚资金接力买入，超大单观望";
+    return "主力小幅回流，力度一般";
+  }
+  return "主力净流出、散户资金承接——注意兑现风险";
+}
+
+interface ConceptFlowRow {
+  bk: string;
+  mainNet: number;
+  superNet: number;
+  bigNet: number;
+  amount: number;
+}
+
+/** 全量概念板块资金流 (含超大/大单拆分与成交额), name→row. */
+async function fetchConceptFlowIndex(): Promise<Map<string, ConceptFlowRow>> {
+  const out = new Map<string, ConceptFlowRow>();
+  for (let pn = 1; pn <= 7; pn++) {
+    const rows = await fetchRetry(() =>
+      fetch(
+        `https://push2.eastmoney.com/api/qt/clist/get?fid=f62&po=1&pz=100&pn=${pn}&np=1&fltt=2&invt=2&fs=m:90+t:3+f:!50&fields=f12,f14,f62,f66,f72,f6`,
+        { headers: HEADERS },
+      ).then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          data?: { diff?: Array<{ f12: string; f14: string; f62: number; f66: number; f72: number; f6: number }> };
+        };
+        return json.data?.diff ?? [];
+      }),
+    );
+    if (!rows || rows.length === 0) break;
+    for (const r of rows) {
+      out.set(r.f14, {
+        bk: r.f12,
+        mainNet: r.f62 / YI,
+        superNet: r.f66 / YI,
+        bigNet: r.f72 / YI,
+        amount: r.f6 / YI,
+      });
+    }
+  }
+  return out;
+}
+
+/** 板块成交额历史 (今日/昨日/5日均) → 放量百分比. */
+async function fetchBoardAmountStats(
+  bk: string,
+): Promise<{ amount: number; changePct: number; vs5dPct: number } | null> {
+  const amounts = await fetchRetry(async () => {
+    const res = await fetch(
+      `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=90.${bk}&fields1=f1,f2,f3,f7&fields2=f51,f57&klt=101&fqt=1&end=20500101&lmt=6`,
+      { headers: HEADERS },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = (await res.json()) as { data?: { klines?: string[] } };
+    return (json.data?.klines ?? []).map((r) => Number(r.split(",")[1]) / YI);
+  });
+  if (!amounts || amounts.length < 2) return null;
+  const today = amounts[amounts.length - 1];
+  const prev = amounts[amounts.length - 2];
+  const base5 = amounts.slice(-6, -1).reduce((a, b) => a + b, 0) / Math.max(amounts.slice(-6, -1).length, 1);
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  return {
+    amount: r1(today),
+    changePct: prev > 0 ? r1(((today - prev) / prev) * 100) : 0,
+    vs5dPct: base5 > 0 ? r1(((today - base5) / base5) * 100) : 0,
+  };
+}
+
+/** f129 概念名 → 资金流行 (精确匹配, 再退到去"概念"后缀的模糊匹配). */
+function matchConceptFlow(
+  name: string,
+  index: Map<string, ConceptFlowRow>,
+): ConceptFlowRow | null {
+  const exact = index.get(name);
+  if (exact) return exact;
+  const stem = name.replace(/概念$/, "");
+  for (const [bkName, row] of index) {
+    if (bkName.replace(/概念$/, "") === stem) return row;
+  }
+  return null;
+}
+
 // ── Orchestration ───────────────────────────────────────────────────
 
 /**
@@ -590,6 +690,11 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
       score,
       phase,
       leader: leaderStock ? { name: leaderStock.n, lbc: leaderStock.lbc } : null,
+      mainNet: null,
+      buyers: null,
+      amount: null,
+      amountChangePct: null,
+      volumeState: null,
     });
   }
   concepts.sort((a, b) => b.score - a.score);
@@ -634,6 +739,27 @@ export async function fetchMarketSentiment(): Promise<MarketSentiment | null> {
         leaderAlert = `主线龙头 ${label} 今日断板（+${pct.toFixed(1)}%）——梯队断层，观察低位能否承接`;
       }
     }
+  }
+
+  // 题材资金画像: 主力/超大单拆分 + TOP3 板块成交额放量幅度.
+  if (top3.length > 0) {
+    const flowIndex =
+      (await fetchConceptFlowIndex().catch(() => null)) ??
+      new Map<string, ConceptFlowRow>();
+    await Promise.all(
+      top3.map(async (c) => {
+        const flow = matchConceptFlow(c.name, flowIndex);
+        if (!flow) return;
+        c.mainNet = Math.round(flow.mainNet * 10) / 10;
+        c.buyers = describeBuyers(flow.mainNet, flow.superNet, flow.bigNet);
+        const stats = await fetchBoardAmountStats(flow.bk).catch(() => null);
+        if (stats) {
+          c.amount = stats.amount;
+          c.amountChangePct = stats.changePct;
+          c.volumeState = classifyVolumeState(stats.changePct, stats.vs5dPct);
+        }
+      }),
+    );
   }
 
   // 资金面 — failure degrades to a missing funds row, never kills the section.

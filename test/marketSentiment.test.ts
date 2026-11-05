@@ -7,6 +7,7 @@ import {
   phaseMatches,
   classifyVolumeState,
   buildFundComment,
+  describeBuyers,
   type SentimentMetrics,
 } from "../src/marketSentiment.js";
 
@@ -175,5 +176,27 @@ describe("buildFundComment", () => {
     assert.ok(buildFundComment("缩量", -120).includes("冰点"));
     assert.ok(buildFundComment("平量", 30).includes("温和"));
     assert.ok(buildFundComment("平量", -30).includes("观望"));
+  });
+});
+
+describe("describeBuyers", () => {
+  it("attributes super-large orders to institutions / top hot money", () => {
+    const r = describeBuyers(30, 28, 2);
+    assert.ok(r.includes("超大单主导"), r);
+  });
+
+  it("credits mid-tier hot money when big orders lead but supers hesitate", () => {
+    const r = describeBuyers(10, -1, 11);
+    assert.ok(r.includes("游资"), r);
+  });
+
+  it("warns when main force exits and retail absorbs the supply", () => {
+    const r = describeBuyers(-8, -3, -5);
+    assert.ok(r.includes("散户"), r);
+  });
+
+  it("stays neutral on tiny flows", () => {
+    const r = describeBuyers(0.8, 0.5, 0.3);
+    assert.ok(r.includes("分歧不大"), r);
   });
 });

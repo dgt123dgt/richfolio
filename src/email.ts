@@ -906,6 +906,19 @@ function buildSentimentSection(s: MarketSentiment): string {
     <tr>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};font-weight:bold;color:#1a202c;">${c.name}　${phasePill(c.phase)}</td>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};color:#1a202c;">${c.leader ? `${c.leader.name}<span style="color:${S.muted};font-size:10px;">　${c.leader.lbc}板</span>` : "—"}</td>
+      <td style="padding:6px 3px;border-bottom:1px solid ${S.border};">
+        ${
+          c.mainNet != null
+            ? `<span style="color:${c.mainNet >= 0 ? "#b91c1c" : "#15803d"};font-weight:bold;">主力 ${c.mainNet >= 0 ? "+" : ""}${c.mainNet}亿</span>`
+            : `<span style="color:${S.muted};">—</span>`
+        }
+        ${
+          c.volumeState && c.amountChangePct != null
+            ? `<div style="font-size:9px;color:${S.muted};">${c.volumeState} ${c.amountChangePct >= 0 ? "+" : ""}${c.amountChangePct}%（成交 ${c.amount ?? "—"} 亿）</div>`
+            : ""
+        }
+        ${c.buyers ? `<div style="font-size:9px;color:${S.muted};">${c.buyers}</div>` : ""}
+      </td>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.ztCount} 家<span style="color:${S.muted};font-size:10px;">（昨 ${c.yCount}）</span></td>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:#1a202c;">${c.maxLbc} 板</td>
       <td style="padding:6px 3px;border-bottom:1px solid ${S.border};text-align:right;color:${c.premium >= 0 ? "#15803d" : "#b91c1c"};">${c.premium >= 0 ? "+" : ""}${c.premium.toFixed(1)}%</td>
@@ -967,6 +980,7 @@ ${
     <tr style="color:${S.muted};font-size:10px;">
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">题材</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">龙头</td>
+      <td style="padding:4px 3px;border-bottom:1px solid ${S.border};">资金</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">今日涨停</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">最高板</td>
       <td style="padding:4px 3px;border-bottom:1px solid ${S.border};text-align:right;">昨日溢价</td>
